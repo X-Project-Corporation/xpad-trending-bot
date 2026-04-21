@@ -63,34 +63,35 @@ export function formatTrendingList(tokens) {
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     const icon = statusIcon(t);
-    const change = fmtPct(t.priceChange24h);
-    const line1 = `${i + 1}. ${icon} <b>${esc(t.symbol)}</b> \u2014 ${fmtUsd(t.mcap)} MC \u2014 ${change}`;
-    const parts = [statusLabel(t)];
-    if (t.volume24h > 0) parts.push(`Vol ${fmtUsd(t.volume24h)}`);
-    if (t.holders > 0) parts.push(`${fmtNum(t.holders)} holders`);
-    const age = tokenAge(t);
-    if (age) parts.push(age);
+    const change = t.priceChange24h ? ` \u2014 ${fmtPct(t.priceChange24h)} 24h` : "";
+    const mcap = t.mcap > 0 ? `${fmtUsd(t.mcap)} MC` : "$0 MC";
+    const line1 = `${i + 1}. ${icon} <b>${esc(t.symbol)}</b> \u2014 ${mcap}${change}`;
+
+    // Second line: status + volume/liquidity or bonding info
+    const parts = [];
+    if (t.status === "graduated") {
+      parts.push("\ud83c\udf93 Graduated");
+      if (t.volume24h > 0) parts.push(`Vol ${fmtUsd(t.volume24h)}`);
+      if (t.liquidity > 0) parts.push(`Liq ${fmtUsd(t.liquidity)}`);
+    } else {
+      parts.push("\ud83c\udd95 New");
+      const age = tokenAge(t);
+      if (age) parts.push(age);
+      if (t.bondingProgress > 0) parts.push(`Bonding ${Math.round(t.bondingProgress)}%`);
+    }
     const line2 = `   ${parts.join(" | ")}`;
     lines.push(line1, line2, "");
   }
   return lines.join("\n");
 }
 
-export function formatTrendingButtons(tokens) {
-  const rows = [];
-  for (const t of tokens) {
-    const buttons = [
-      { text: "\ud83d\udcc8 Chart", url: `https://xpad.fun/token/${t.address}` },
-    ];
-    if (t.status === "graduated") {
-      buttons.push({ text: "\ud83d\udcb0 Buy", url: `https://xpad.fun/token/${t.address}` });
-      buttons.push({ text: "\ud83e\udd84 DexScreener", url: `https://dexscreener.com/ethereum/${t.pairAddress || t.address}` });
-    } else {
-      buttons.push({ text: "\ud83d\udcb0 Buy on xpad", url: `https://xpad.fun/token/${t.address}` });
-    }
-    rows.push(buttons);
-  }
-  return rows;
+export function formatTrendingButtons() {
+  return [
+    [
+      { text: "\ud83d\udd04 Refresh", callback_data: "menu_trending" },
+      { text: "\ud83d\udd19 Menu", callback_data: "back_main" },
+    ],
+  ];
 }
 
 // ─── New launches list ───────────────────────────────────────────

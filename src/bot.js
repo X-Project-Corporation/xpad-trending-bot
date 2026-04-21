@@ -180,8 +180,7 @@ bot.onText(/\/trending/, (msg) => sendTrending(msg.chat.id));
 function sendTrending(chatId, editMessageId) {
   const tokens = getTrending(10);
   const text = formatTrendingList(tokens);
-  const buttons = formatTrendingButtons(tokens);
-  buttons.push([{ text: "\u25c0\ufe0f Back", callback_data: "back_main" }]);
+  const buttons = formatTrendingButtons();
 
   const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: buttons }, disable_web_page_preview: true };
   if (editMessageId) {

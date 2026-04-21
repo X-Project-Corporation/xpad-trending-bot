@@ -1,5 +1,18 @@
 import { XPAD_API_URL } from "./config.js";
 
+// ─── Hidden tokens (test/spam) ─────────────────────────────────
+
+const HIDDEN_TOKENS = new Set([
+  '0x71cbbdaa723f9b892f42d76e53e5e404495ddef1', // PEKKA
+  '0xd8e9db16328a4aacae21f34f811a5572d7f7def1', // MCDUCK
+  '0xe14c2c4728bb60fac60000ae34bac076f3b2def1', // WAGMIKID
+  '0xtestimagecheck123456789012345678901234',     // ImageTest
+  '0x653349f4c2c7407000fbc4094663cd9d58afdef1',
+  '0x99f9d3ad405d14349aa2d957957c5fa98acbd6ff',
+  '0xd7e7c6c988c9646d2988fbc4ebfebd3ab0f07c25',
+  '0x68b3dc6e4dbba6e4e6838274b5e212c870cddef1',
+]);
+
 // ─── In-memory token data ────────────────────────────────────────
 
 /** All tokens keyed by address (lowercase). */
@@ -58,35 +71,34 @@ export function getTrending(limit = 10) {
 }
 
 function computeScore(token) {
-  let score = 0;
-
-  // Volume 24h (log scale, max ~50 pts)
+  // Use real volume and price change for scoring
   const vol = token.volume24h || 0;
-  if (vol > 0) score += Math.min(50, Math.log10(vol + 1) * 12);
+  const change = token.priceChange24h || 0;
 
-  // Price change % (bigger moves = more trending, max 30 pts)
-  const priceChange = Math.abs(token.priceChange24h || 0);
-  score += Math.min(30, priceChange * 0.3);
+  // Base: volume * momentum multiplier
+  let score = vol * (1 + change / 100);
 
-  // Buys in last hour (max 20 pts)
-  const buysHour = token.buys1h || 0;
-  score += Math.min(20, buysHour * 2);
-
-  // Age boost: tokens < 24h get up to 15 pts
+  // Age factor: newer tokens get a boost
   if (token.createdAt) {
     const ageHours = (Date.now() - new Date(token.createdAt).getTime()) / 3_600_000;
-    if (ageHours < 24) score += Math.max(0, 15 - ageHours * 0.625);
+    if (ageHours < 1) score *= 3;
+    else if (ageHours < 6) score *= 2;
+    else if (ageHours < 24) score *= 1.5;
+    else if (ageHours < 72) score *= 1.2;
   }
 
-  // Bonding curve speed: fast fill = trending (max 15 pts)
-  if (token.status === "bonding" && token.bondingProgress > 0) {
-    const ageHours = token.createdAt
-      ? (Date.now() - new Date(token.createdAt).getTime()) / 3_600_000
-      : 24;
+  // Bonding curve speed boost
+  if (token.status === "bonding" && token.bondingProgress > 0 && token.createdAt) {
+    const ageHours = (Date.now() - new Date(token.createdAt).getTime()) / 3_600_000;
     if (ageHours > 0) {
       const fillRate = token.bondingProgress / ageHours;
-      score += Math.min(15, fillRate * 3);
+      score += fillRate * 100;
     }
+  }
+
+  // Fallback: if no volume data, use mcap as a weak signal
+  if (vol === 0 && token.mcap > 0) {
+    score += token.mcap * 0.001;
   }
 
   return Math.round(score * 100) / 100;
@@ -105,7 +117,6 @@ export function getGraduatedTokens(limit = 10) {
   const sorted = [...tokens.values()]
     .filter((t) => t.status === "graduated")
     .sort((a, b) => {
-      // Sort by graduation time if available, otherwise by market cap
       return (b.mcap || 0) - (a.mcap || 0);
     });
   return sorted.slice(0, limit);
@@ -117,8 +128,6 @@ export function getPlatformStats() {
   const all = [...tokens.values()];
   const graduated = all.filter((t) => t.status === "graduated").length;
   const totalVolume = all.reduce((s, t) => s + (t.volume24h || 0), 0);
-  const activeTraders = new Set();
-  // We don't have per-trader data from the API, so use holder counts
   const totalHolders = all.reduce((s, t) => s + (t.holders || 0), 0);
 
   return {
@@ -130,6 +139,33 @@ export function getPlatformStats() {
   };
 }
 
+// ─── Deduplication helper ────────────────────────────────────────
+
+function dedupeTokenList(tokenList) {
+  const seen = new Map(); // key: "name|symbol" -> best token (highest mcap)
+  const result = [];
+  for (const raw of tokenList) {
+    const name = (raw.name || "").toLowerCase().trim();
+    const symbol = (raw.symbol || "").toLowerCase().trim();
+    const key = `${name}|${symbol}`;
+    const mcap = parseNum(raw.marketCap ?? raw.mcap ?? 0);
+    if (seen.has(key)) {
+      const prev = seen.get(key);
+      // Keep the one with higher mcap or more recent creation
+      if (mcap > prev.mcap) {
+        seen.set(key, { index: result.length, mcap, raw });
+        // Replace in result
+        result[prev.index] = raw;
+      }
+      // Otherwise skip this duplicate
+    } else {
+      seen.set(key, { index: result.length, mcap, raw });
+      result.push(raw);
+    }
+  }
+  return result.filter(Boolean);
+}
+
 // ─── Fetch loop ──────────────────────────────────────────────────
 
 let lastSnapshotTime = 0;
@@ -139,24 +175,71 @@ async function fetchAllTokens() {
     const res = await fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200`);
     if (!res.ok) throw new Error(`Token list ${res.status}`);
     const list = await res.json();
-    const tokenList = Array.isArray(list) ? list : list.tokens || [];
+    let tokenList = Array.isArray(list) ? list : list.tokens || [];
+
+    // Deduplicate tokens with same name+symbol
+    tokenList = dedupeTokenList(tokenList);
 
     const currentAddrs = new Set();
     const currentGraduated = new Set();
 
+    // First pass: basic data from DB API, filter hidden tokens
+    const validTokens = [];
     for (const raw of tokenList) {
       const addr = (raw.tokenAddress || raw.address || "").toLowerCase();
       if (!addr) continue;
+      if (HIDDEN_TOKENS.has(addr)) continue;
+      validTokens.push({ raw, addr });
       currentAddrs.add(addr);
+    }
 
-      // Fetch detailed info
-      let detail = null;
+    // Second pass: fetch real data from Trade API for top tokens
+    // Limit to 15 concurrent requests to avoid hammering the API
+    const toEnrich = validTokens.slice(0, 15);
+    const tradeDataMap = new Map();
+
+    const tradePromises = toEnrich.map(async ({ addr }) => {
       try {
-        const dRes = await fetch(
+        const tRes = await fetch(
           `${XPAD_API_URL}/trade/token-info?tokenAddress=${addr}`
         );
-        if (dRes.ok) detail = await dRes.json();
+        if (tRes.ok) {
+          const data = await tRes.json();
+          tradeDataMap.set(addr, data);
+        }
       } catch {}
+    });
+    await Promise.all(tradePromises);
+
+    // Third pass: for graduated tokens with pairAddress, fetch DexScreener
+    const dexDataMap = new Map();
+    const dexPromises = [];
+    for (const [addr, tData] of tradeDataMap) {
+      const isGrad = tData.graduated === true || tData.status === "graduated";
+      const pairAddr = tData.pairAddress || tData.pair;
+      if (isGrad && pairAddr) {
+        dexPromises.push(
+          (async () => {
+            try {
+              const dRes = await fetch(
+                `https://api.dexscreener.com/latest/dex/pairs/ethereum/${pairAddr}`
+              );
+              if (dRes.ok) {
+                const dJson = await dRes.json();
+                const pair = dJson.pair || dJson.pairs?.[0];
+                if (pair) dexDataMap.set(addr, pair);
+              }
+            } catch {}
+          })()
+        );
+      }
+    }
+    await Promise.all(dexPromises);
+
+    // Build token objects
+    for (const { raw, addr } of validTokens) {
+      const detail = tradeDataMap.get(addr) || null;
+      const dex = dexDataMap.get(addr) || null;
 
       const isGraduated =
         raw.status === "graduated" ||
@@ -167,23 +250,36 @@ async function fetchAllTokens() {
       if (isGraduated) currentGraduated.add(addr);
 
       const existing = tokens.get(addr) || {};
+
+      // Parse Trade API values as floats (API returns strings!)
+      const tradeMcap = detail ? parseNum(detail.mcapUsd ?? detail.marketCap ?? detail.mcap) : 0;
+      const tradePrice = detail ? parseNum(detail.priceUsd ?? detail.price) : 0;
+      const tradeLiquidity = detail ? parseNum(detail.liquidityEth ?? detail.liquidity) : 0;
+
+      // DexScreener overrides for graduated tokens
+      const dexMcap = dex ? parseNum(dex.marketCap ?? dex.fdv) : 0;
+      const dexVolume = dex ? parseNum(dex.volume?.h24) : 0;
+      const dexChange = dex ? parseNum(dex.priceChange?.h24) : 0;
+      const dexLiquidity = dex ? parseNum(dex.liquidity?.usd) : 0;
+      const dexPrice = dex ? parseNum(dex.priceUsd) : 0;
+
       const token = {
         address: addr,
         name: raw.name || detail?.name || existing.name || "Unknown",
         symbol: raw.symbol || detail?.symbol || existing.symbol || "???",
         status: isGraduated ? "graduated" : "bonding",
         createdAt: raw.createdAt || raw.created_at || detail?.createdAt || existing.createdAt || null,
-        mcap: parseNum(detail?.marketCap ?? detail?.mcap ?? raw.marketCap ?? raw.mcap),
-        price: parseNum(detail?.price ?? raw.price),
-        volume24h: parseNum(detail?.volume24h ?? detail?.volume ?? raw.volume24h ?? raw.volume),
-        priceChange24h: parseNum(detail?.priceChange24h ?? detail?.change24h ?? raw.priceChange24h),
+        mcap: dexMcap || tradeMcap || parseNum(raw.marketCap ?? raw.mcap),
+        price: dexPrice || tradePrice || parseNum(raw.price),
+        volume24h: dexVolume || parseNum(detail?.volume24h ?? detail?.volume ?? raw.volume24h ?? raw.volume),
+        priceChange24h: dexChange || parseNum(detail?.priceChange24h ?? detail?.change24h ?? raw.priceChange24h),
         holders: parseInt(detail?.holders ?? detail?.holderCount ?? raw.holders ?? 0) || 0,
-        liquidity: parseNum(detail?.liquidity ?? raw.liquidity),
+        liquidity: dexLiquidity || tradeLiquidity || parseNum(raw.liquidity),
         bondingProgress: parseNum(detail?.bondingProgress ?? detail?.progress ?? raw.bondingProgress ?? raw.progress),
         buys1h: parseInt(detail?.buys1h ?? detail?.txns1h ?? 0) || 0,
         buys24h: parseInt(detail?.buys24h ?? detail?.txns24h ?? 0) || 0,
         imageUrl: raw.imageUrl || raw.image || detail?.imageUrl || existing.imageUrl || null,
-        pairAddress: detail?.pairAddress ?? raw.pairAddress ?? existing.pairAddress ?? null,
+        pairAddress: detail?.pairAddress ?? detail?.pair ?? raw.pairAddress ?? existing.pairAddress ?? null,
       };
 
       tokens.set(addr, token);
@@ -233,7 +329,7 @@ async function fetchAllTokens() {
       }
     }
 
-    console.log(`Fetched ${tokenList.length} tokens (${currentGraduated.size} graduated)`);
+    console.log(`Fetched ${validTokens.length} tokens (${currentGraduated.size} graduated, ${tokenList.length - validTokens.length} hidden/duped)`);
   } catch (err) {
     console.error("Fetch error:", err.message);
   }
