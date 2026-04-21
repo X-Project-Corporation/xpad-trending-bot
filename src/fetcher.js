@@ -129,6 +129,7 @@ export function getPlatformStats() {
   const graduated = all.filter((t) => t.status === "graduated").length;
   const totalVolume = all.reduce((s, t) => s + (t.volume24h || 0), 0);
   const totalHolders = all.reduce((s, t) => s + (t.holders || 0), 0);
+  const totalMcap = all.reduce((s, t) => s + (t.mcap || 0), 0);
 
   return {
     totalTokens: all.length,
@@ -136,6 +137,7 @@ export function getPlatformStats() {
     bonding: all.length - graduated,
     totalVolume24h: totalVolume,
     totalHolders,
+    totalMcap,
   };
 }
 

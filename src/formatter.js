@@ -32,12 +32,6 @@ function fmtNum(n) {
   return Number(n).toLocaleString("en-US", { maximumFractionDigits: 0 });
 }
 
-function statusIcon(token) {
-  if (token.status === "graduated") return "\ud83c\udf93";
-  if (token.bondingProgress >= 50) return "\ud83d\udfe1"; // yellow — halfway
-  return "\ud83d\udfe2"; // green — new
-}
-
 function statusLabel(token) {
   if (token.status === "graduated") return "Graduated";
   if (token.bondingProgress > 0) return `Bonding ${Math.round(token.bondingProgress)}%`;
@@ -51,37 +45,139 @@ function tokenAge(token) {
   if (hours < 1) return `${Math.round(hours * 60)}m old`;
   if (hours < 24) return `${Math.round(hours)}h old`;
   const days = Math.round(hours / 24);
-  return `${days}d old`;
+  if (days < 30) return `${days}d old`;
+  const months = Math.round(days / 30);
+  return `${months}mo old`;
+}
+
+function bondingBar(progress) {
+  if (!progress || progress <= 0) return "";
+  const pct = Math.min(Math.round(progress), 100);
+  const filled = Math.round(pct / 6.25); // 16 chars total
+  const bar = "\u2588".repeat(filled) + "\u2591".repeat(16 - filled);
+  return `${bar} ${pct}%`;
+}
+
+function timeAgo() {
+  return "just now";
+}
+
+// ─── Welcome / Start (private chat) ─────────────────────────────
+
+export function formatWelcome(stats) {
+  const totalTokens = stats?.totalTokens || 0;
+  const graduated = stats?.graduated || 0;
+  const totalVol = stats?.totalVolume24h || 0;
+  const volStr = totalVol > 0 ? fmtUsd(totalVol) : "$0";
+
+  return [
+    `<b>\ud83c\udfc6 XPAD TRENDING</b>`,
+    ``,
+    `The #1 trending tracker for xpad.fun tokens.`,
+    ``,
+    `Track every token. Catch every pump. Never miss a graduation.`,
+    ``,
+    `\ud83d\udcca <b>${fmtNum(totalTokens)}</b> tokens tracked | <b>${fmtNum(graduated)}</b> graduated | <b>${volStr}</b> total volume`,
+  ].join("\n");
+}
+
+export function welcomeKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "\ud83d\udd25 Trending Now", callback_data: "menu_trending" },
+        { text: "\ud83c\udd95 New Launches", callback_data: "menu_new" },
+      ],
+      [
+        { text: "\ud83c\udf93 Graduated", callback_data: "menu_graduated" },
+        { text: "\ud83d\udcca Platform Stats", callback_data: "menu_stats" },
+      ],
+      [
+        { text: "\ud83d\udd14 My Alerts", callback_data: "menu_alerts" },
+        { text: "\u2699\ufe0f Settings", callback_data: "menu_settings" },
+      ],
+      [
+        { text: "\ud83d\udc8e Top Holders", callback_data: "menu_top_holders" },
+        { text: "\ud83d\udc0b Whale Alerts", callback_data: "menu_whale_alerts" },
+      ],
+    ],
+  };
+}
+
+// ─── Welcome / Start (group chat) ───────────────────────────────
+
+export function formatGroupWelcome() {
+  return [
+    `<b>\ud83c\udfc6 XPAD TRENDING BOT is active!</b>`,
+    ``,
+    `\ud83d\udce1 Posting all buys automatically`,
+    `\ud83d\udd25 Trending updates every 2h`,
+    `\ud83c\udf93 Graduation alerts`,
+    ``,
+    `Use /trending, /token XCEO, /stats in this group.`,
+    `Manage alerts: DM @xpad_trending_bot`,
+  ].join("\n");
 }
 
 // ─── Trending list ───────────────────────────────────────────────
 
 export function formatTrendingList(tokens) {
-  if (!tokens.length) return "<b>\ud83d\udd25 XPAD TRENDING</b>\n\nNo tokens found yet.";
+  if (!tokens.length) {
+    return [
+      `<b>\ud83d\udd25 XPAD TRENDING</b>`,
+      ``,
+      `No tokens found yet. Check back soon!`,
+    ].join("\n");
+  }
 
-  const lines = ["<b>\ud83d\udd25 XPAD TRENDING</b>", ""];
+  const lines = [
+    `<b>\ud83d\udd25 XPAD TRENDING</b> \u2014 Updated ${timeAgo()}`,
+    ``,
+    `\u2501\u2501\u2501 TOP TOKENS BY MOMENTUM \u2501\u2501\u2501`,
+    ``,
+  ];
+
+  const medals = ["1\ufe0f\u20e3", "2\ufe0f\u20e3", "3\ufe0f\u20e3", "4\ufe0f\u20e3", "5\ufe0f\u20e3", "6\ufe0f\u20e3", "7\ufe0f\u20e3", "8\ufe0f\u20e3", "9\ufe0f\u20e3", "\ud83d\udd1f"];
+
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
-    const icon = statusIcon(t);
-    const change = t.priceChange24h ? ` \u2014 ${fmtPct(t.priceChange24h)} 24h` : "";
-    const mcap = t.mcap > 0 ? `${fmtUsd(t.mcap)} MC` : "$0 MC";
-    const line1 = `${i + 1}. ${icon} <b>${esc(t.symbol)}</b> \u2014 ${mcap}${change}`;
+    const num = medals[i] || `${i + 1}.`;
+    const name = t.name && t.name !== t.symbol ? ` \u00b7 ${esc(t.name)}` : "";
 
-    // Second line: status + volume/liquidity or bonding info
-    const parts = [];
+    lines.push(`${num} <b>${esc(t.symbol)}</b>${name}`);
+
+    // Line 2: MC + price change
+    const mcStr = t.mcap > 0 ? `\ud83d\udcb0 ${fmtUsd(t.mcap)} MC` : "";
+    const changeStr = t.priceChange24h ? `\ud83d\udcc8 ${fmtPct(t.priceChange24h)} 24h` : "";
+    const parts2 = [mcStr, changeStr].filter(Boolean);
+    if (parts2.length) lines.push(`   ${parts2.join(" \u00b7 ")}`);
+
+    // Line 3: Liquidity + Volume
+    const liqStr = t.liquidity > 0 ? `\ud83d\udca7 ${fmtUsd(t.liquidity)} Liq` : "";
+    const volStr = t.volume24h > 0 ? `\ud83d\udcca ${fmtUsd(t.volume24h)} Vol 24h` : "";
+    const parts3 = [liqStr, volStr].filter(Boolean);
+    if (parts3.length) lines.push(`   ${parts3.join(" \u00b7 ")}`);
+
+    // Line 4: Holders + Status
     if (t.status === "graduated") {
-      parts.push("\ud83c\udf93 Graduated");
-      if (t.volume24h > 0) parts.push(`Vol ${fmtUsd(t.volume24h)}`);
-      if (t.liquidity > 0) parts.push(`Liq ${fmtUsd(t.liquidity)}`);
+      const holderStr = t.holders > 0 ? `\ud83d\udc65 ${fmtNum(t.holders)} holders \u00b7 ` : "";
+      lines.push(`   ${holderStr}\ud83c\udf93 Graduated`);
+      lines.push(`   \u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501 \ud83d\udfe2`);
     } else {
-      parts.push("\ud83c\udd95 New");
       const age = tokenAge(t);
-      if (age) parts.push(age);
-      if (t.bondingProgress > 0) parts.push(`Bonding ${Math.round(t.bondingProgress)}%`);
+      const ageStr = age ? `\ud83c\udd95 ${age}` : "";
+      const bondStr = t.bondingProgress > 0 ? `\ud83d\udfe3 Bonding ${Math.round(t.bondingProgress)}%` : "";
+      const parts4 = [ageStr, bondStr].filter(Boolean);
+      if (parts4.length) lines.push(`   ${parts4.join(" \u00b7 ")}`);
+      if (t.bondingProgress > 0) {
+        lines.push(`   ${bondingBar(t.bondingProgress)}`);
+      }
     }
-    const line2 = `   ${parts.join(" | ")}`;
-    lines.push(line1, line2, "");
+
+    lines.push("");
   }
+
+  lines.push(`\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501`);
   return lines.join("\n");
 }
 
@@ -89,246 +185,408 @@ export function formatTrendingButtons() {
   return [
     [
       { text: "\ud83d\udd04 Refresh", callback_data: "menu_trending" },
-      { text: "\ud83d\udd19 Menu", callback_data: "back_main" },
+      { text: "\ud83d\udcca Full Stats", callback_data: "menu_stats" },
     ],
+    [{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }],
   ];
 }
 
-// ─── New launches list ───────────────────────────────────────────
+// ─── New launches list ──────────────────────────────────────────
 
 export function formatNewList(tokens) {
-  if (!tokens.length) return "<b>\ud83c\udd95 NEW LAUNCHES</b>\n\nNo tokens yet.";
+  if (!tokens.length) {
+    return [
+      `<b>\ud83c\udd95 LATEST XPAD LAUNCHES</b>`,
+      ``,
+      `No tokens launched yet. Check back soon!`,
+    ].join("\n");
+  }
 
-  const lines = ["<b>\ud83c\udd95 NEW LAUNCHES</b>", ""];
+  const lines = [`<b>\ud83c\udd95 LATEST XPAD LAUNCHES</b>`, ``];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
     const age = tokenAge(t);
-    const line1 = `${i + 1}. <b>${esc(t.symbol)}</b> \u2014 ${fmtUsd(t.mcap)} MC`;
-    const parts = [statusLabel(t)];
-    if (age) parts.push(age);
-    if (t.holders > 0) parts.push(`${fmtNum(t.holders)} holders`);
-    lines.push(line1, `   ${parts.join(" | ")}`, "");
+    const mcStr = t.mcap > 0 ? `${fmtUsd(t.mcap)} MC` : "$0 MC";
+    const bondStr = t.bondingProgress > 0 ? `Bonding ${Math.round(t.bondingProgress)}%` : "New";
+
+    const parts = [`${age}`, mcStr, bondStr].filter(Boolean);
+    lines.push(`${i + 1}. <b>${esc(t.symbol)}</b> \u00b7 ${parts.join(" \u00b7 ")}`);
   }
   return lines.join("\n");
 }
 
-// ─── Graduated list ──────────────────────────────────────────────
+export function formatNewButtons(tokens) {
+  const buttons = tokens.slice(0, 5).map((t) => [
+    { text: `\ud83d\udcc8 ${t.symbol}`, url: `https://xpad.fun/token/${t.address}` },
+    { text: "\ud83d\udcb0 Buy", url: `https://xpad.fun/token/${t.address}` },
+  ]);
+  buttons.push([{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }]);
+  return buttons;
+}
+
+// ─── Graduated list ─────────────────────────────────────────────
 
 export function formatGraduatedList(tokens) {
-  if (!tokens.length) return "<b>\ud83c\udf93 GRADUATED TOKENS</b>\n\nNo graduated tokens yet.";
+  if (!tokens.length) {
+    return [
+      `<b>\ud83c\udf93 GRADUATED TOKENS</b>`,
+      ``,
+      `No graduated tokens yet. Check back soon!`,
+    ].join("\n");
+  }
 
-  const lines = ["<b>\ud83c\udf93 GRADUATED TOKENS</b>", ""];
+  const lines = [
+    `<b>\ud83c\udf93 GRADUATED TOKENS</b>`,
+    ``,
+    `Tokens that completed their bonding curve and are now trading on Uniswap.`,
+    ``,
+  ];
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
-    const change = fmtPct(t.priceChange24h);
-    const line1 = `${i + 1}. <b>${esc(t.symbol)}</b> \u2014 ${fmtUsd(t.mcap)} MC \u2014 ${change}`;
-    const parts = [];
-    if (t.volume24h > 0) parts.push(`Vol ${fmtUsd(t.volume24h)}`);
-    if (t.holders > 0) parts.push(`${fmtNum(t.holders)} holders`);
-    if (t.liquidity > 0) parts.push(`Liq ${fmtUsd(t.liquidity)}`);
-    lines.push(line1, `   ${parts.join(" | ")}`, "");
+    const mcStr = t.mcap > 0 ? `${fmtUsd(t.mcap)} MC` : "-- MC";
+    const changeStr = t.priceChange24h ? `${fmtPct(t.priceChange24h)} 24h` : "";
+    const holderStr = t.holders > 0 ? `${fmtNum(t.holders)} holders` : "";
+
+    const parts = [mcStr, changeStr, holderStr].filter(Boolean);
+    lines.push(`${i + 1}. <b>${esc(t.symbol)}</b> \u00b7 ${parts.join(" \u00b7 ")}`);
   }
   return lines.join("\n");
 }
 
-// ─── Token detail ────────────────────────────────────────────────
+export function formatGraduatedButtons(tokens) {
+  const buttons = tokens.slice(0, 5).map((t) => [
+    { text: `\ud83d\udcc8 ${t.symbol}`, url: `https://xpad.fun/token/${t.address}` },
+    { text: "\ud83e\udd84 DexScreener", url: `https://dexscreener.com/ethereum/${t.pairAddress || t.address}` },
+  ]);
+  buttons.push([{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }]);
+  return buttons;
+}
+
+// ─── Token detail ───────────────────────────────────────────────
 
 export function formatTokenDetail(t) {
   const lines = [
-    `<b>\ud83c\udff7 ${esc(t.name)} ($${esc(t.symbol)})</b>`,
-    "",
-    `\ud83d\udcca Price: ${fmtPrice(t.price)}`,
-    `\ud83d\udcb0 Market Cap: ${fmtUsd(t.mcap)}`,
+    `\u2501\u2501\u2501 <b>${esc(t.symbol)}</b> \u00b7 ${esc(t.name)} \u2501\u2501\u2501`,
+    ``,
+    `\ud83d\udcb0 Price: <b>${fmtPrice(t.price)}</b>`,
+    `\ud83d\udcca Market Cap: <b>${fmtUsd(t.mcap)}</b>`,
   ];
-  if (t.liquidity > 0) lines.push(`\ud83d\udca7 Liquidity: ${fmtUsd(t.liquidity)}`);
-  lines.push(`\ud83d\udcc8 24h: ${fmtPct(t.priceChange24h)}`);
-  if (t.volume24h > 0) lines.push(`\ud83d\udcb5 Volume 24h: ${fmtUsd(t.volume24h)}`);
-  if (t.holders > 0) lines.push(`\ud83d\udc65 Holders: ${fmtNum(t.holders)}`);
-  lines.push(`\ud83c\udf93 Status: ${statusLabel(t)}`);
-  if (t.pairAddress) lines.push(`\ud83d\udd17 Pair: <code>${shortAddr(t.pairAddress)}</code>`);
-  lines.push("", `\ud83d\udccd <code>${t.address}</code>`);
+  if (t.liquidity > 0) lines.push(`\ud83d\udca7 Liquidity: <b>${fmtUsd(t.liquidity)}</b>`);
+  lines.push(`\ud83d\udcc8 24h Change: <b>${fmtPct(t.priceChange24h)}</b>`);
+  if (t.volume24h > 0) lines.push(`\ud83d\udcca Volume 24h: <b>${fmtUsd(t.volume24h)}</b>`);
+  if (t.holders > 0) lines.push(`\ud83d\udc65 Holders: <b>${fmtNum(t.holders)}</b>`);
+
+  if (t.status === "graduated") {
+    lines.push(`\ud83c\udf93 Status: <b>Graduated (Uniswap V2)</b>`);
+  } else {
+    const bondStr = t.bondingProgress > 0 ? `Bonding ${Math.round(t.bondingProgress)}%` : "New";
+    lines.push(`\ud83d\udfe3 Status: <b>${bondStr}</b>`);
+    if (t.bondingProgress > 0) {
+      lines.push(`   ${bondingBar(t.bondingProgress)}`);
+    }
+  }
+
+  lines.push(``);
+  lines.push(`\ud83d\udd17 Contract: <code>${shortAddr(t.address)}</code>`);
+  if (t.createdAt) {
+    const created = new Date(t.createdAt);
+    const dateStr = created.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+    const age = tokenAge(t);
+    lines.push(`\ud83d\udcc5 Created: ${dateStr} (${age})`);
+  }
+
   return lines.join("\n");
 }
 
 export function formatTokenButtons(t) {
   const rows = [
     [
-      { text: "\ud83d\udcc8 Chart", url: `https://xpad.fun/token/${t.address}` },
-      { text: "\ud83d\udcb0 Buy", url: `https://xpad.fun/token/${t.address}` },
+      { text: "\ud83d\udcca Chart", url: `https://xpad.fun/token/${t.address}` },
+      { text: "\ud83d\udcb0 Buy on xpad", url: `https://xpad.fun/token/${t.address}` },
     ],
   ];
   if (t.status === "graduated") {
     rows.push([
-      { text: "\ud83e\udd84 DexScreener", url: `https://dexscreener.com/ethereum/${t.pairAddress || t.address}` },
       { text: "\ud83d\udd0d Etherscan", url: `https://etherscan.io/token/${t.address}` },
+      { text: "\ud83d\udcc8 DexScreener", url: `https://dexscreener.com/ethereum/${t.pairAddress || t.address}` },
     ]);
   } else {
     rows.push([
       { text: "\ud83d\udd0d Etherscan", url: `https://etherscan.io/token/${t.address}` },
     ]);
   }
+  rows.push([{ text: "\ud83d\udd19 Back to Trending", callback_data: "menu_trending" }]);
   return rows;
 }
 
-// ─── Platform stats ──────────────────────────────────────────────
+// ─── Platform stats ─────────────────────────────────────────────
 
-export function formatStats(stats) {
-  return [
-    "<b>\ud83d\udcca XPAD PLATFORM STATS</b>",
-    "",
-    `\ud83e\ude99 Total Tokens: <b>${fmtNum(stats.totalTokens)}</b>`,
-    `\ud83c\udf93 Graduated: <b>${fmtNum(stats.graduated)}</b>`,
-    `\ud83d\udfe2 Bonding: <b>${fmtNum(stats.bonding)}</b>`,
-    `\ud83d\udcb5 Volume 24h: <b>${fmtUsd(stats.totalVolume24h)}</b>`,
-    `\ud83d\udc65 Total Holders: <b>${fmtNum(stats.totalHolders)}</b>`,
-  ].join("\n");
-}
-
-// ─── Alert messages ──────────────────────────────────────────────
-
-export function formatNewLaunchAlert(t) {
+export function formatStats(stats, topToken, latestLaunch) {
   const lines = [
-    `\ud83d\ude80 <b>NEW TOKEN LAUNCHED</b>`,
-    "",
-    `<b>${esc(t.name)} ($${esc(t.symbol)})</b>`,
+    `<b>\ud83d\udcca XPAD PLATFORM STATS</b>`,
+    ``,
+    `\ud83c\udfed Total Tokens: <b>${fmtNum(stats.totalTokens)}</b>`,
+    `\ud83c\udf93 Graduated: <b>${fmtNum(stats.graduated)}</b>`,
   ];
-  if (t.mcap > 0) lines.push(`\ud83d\udcb0 MC: ${fmtUsd(t.mcap)}`);
-  lines.push("", `<code>${t.address}</code>`);
-  return lines.join("\n");
-}
 
-export function formatGraduationAlert(t) {
-  return [
-    `\ud83c\udf93 <b>TOKEN GRADUATED</b>`,
-    "",
-    `<b>${esc(t.name)} ($${esc(t.symbol)})</b>`,
-    `\ud83d\udcb0 MC: ${fmtUsd(t.mcap)}`,
-    t.holders > 0 ? `\ud83d\udc65 Holders: ${fmtNum(t.holders)}` : "",
-    "",
-    `Now trading on Uniswap!`,
-  ].filter(Boolean).join("\n");
-}
-
-export function formatTrendingAlert(tokens) {
-  const lines = ["\ud83d\udd25 <b>TRENDING UPDATE</b>", ""];
-  for (let i = 0; i < Math.min(5, tokens.length); i++) {
-    const t = tokens[i];
-    lines.push(`${i + 1}. ${statusIcon(t)} <b>${esc(t.symbol)}</b> \u2014 ${fmtUsd(t.mcap)} MC \u2014 ${fmtPct(t.priceChange24h)}`);
+  if (stats.totalMcap > 0) {
+    lines.push(`\ud83d\udcb0 Total MC: <b>${fmtUsd(stats.totalMcap)}</b>`);
   }
+
+  lines.push(`\ud83d\udcca 24h Volume: <b>${fmtUsd(stats.totalVolume24h)}</b>`);
+
+  if (stats.totalHolders > 0) {
+    lines.push(`\ud83d\udc65 Total Holders: <b>${fmtNum(stats.totalHolders)}</b>`);
+  }
+
+  if (topToken) {
+    lines.push(``);
+    lines.push(`\ud83c\udfc6 Top Token: <b>${esc(topToken.symbol)}</b> (${fmtUsd(topToken.mcap)} MC)`);
+  }
+  if (latestLaunch) {
+    const age = tokenAge(latestLaunch);
+    lines.push(`\ud83c\udd95 Latest Launch: <b>${esc(latestLaunch.symbol)}</b> (${age})`);
+  }
+
   return lines.join("\n");
 }
 
-// ─── Alerts settings ─────────────────────────────────────────────
+export function formatStatsButtons() {
+  return [
+    [
+      { text: "\ud83d\udd25 Trending", callback_data: "menu_trending" },
+      { text: "\ud83c\udd95 New Launches", callback_data: "menu_new" },
+    ],
+    [{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }],
+  ];
+}
+
+// ─── Alert settings ─────────────────────────────────────────────
 
 export function formatAlertsSettings(alerts) {
   const on = "\u2705";
   const off = "\u274c";
   return [
-    "<b>\ud83d\udd14 ALERT SETTINGS</b>",
-    "",
-    `${alerts.launches ? on : off} New Launches`,
-    `${alerts.graduations ? on : off} Graduations`,
-    `${alerts.bigBuys ? on : off} Big Buys (>0.1 ETH)`,
-    `${alerts.trending ? on : off} Trending Updates (every 4h)`,
-    "",
-    "Tap to toggle:",
+    `<b>\ud83d\udd14 YOUR ALERTS</b>`,
+    ``,
+    `Toggle notifications:`,
+    ``,
+    `\ud83c\udd95 New Launches: ${alerts.launches ? on + " ON" : off + " OFF"}`,
+    `\ud83c\udf93 Graduations: ${alerts.graduations ? on + " ON" : off + " OFF"}`,
+    `\ud83d\udc0b Whale Buys (>0.1 ETH): ${alerts.bigBuys ? on + " ON" : off + " OFF"}`,
+    `\ud83d\udd25 Trending Updates (2h): ${alerts.trending ? on + " ON" : off + " OFF"}`,
+    ``,
+    `Tap to toggle:`,
   ].join("\n");
 }
 
 export function alertsKeyboard(alerts) {
   return [
     [
-      { text: `${alerts.launches ? "\u2705" : "\u274c"} Launches`, callback_data: "alert_toggle_launches" },
-      { text: `${alerts.graduations ? "\u2705" : "\u274c"} Graduations`, callback_data: "alert_toggle_graduations" },
+      { text: `\ud83c\udd95 Launches ${alerts.launches ? "\u2705" : "\u274c"}`, callback_data: "alert_toggle_launches" },
+      { text: `\ud83c\udf93 Graduations ${alerts.graduations ? "\u2705" : "\u274c"}`, callback_data: "alert_toggle_graduations" },
     ],
     [
-      { text: `${alerts.bigBuys ? "\u2705" : "\u274c"} Big Buys`, callback_data: "alert_toggle_bigBuys" },
-      { text: `${alerts.trending ? "\u2705" : "\u274c"} Trending`, callback_data: "alert_toggle_trending" },
+      { text: `\ud83d\udc0b Whales ${alerts.bigBuys ? "\u2705" : "\u274c"}`, callback_data: "alert_toggle_bigBuys" },
+      { text: `\ud83d\udd25 Trending ${alerts.trending ? "\u2705" : "\u274c"}`, callback_data: "alert_toggle_trending" },
     ],
-    [{ text: "\u25c0\ufe0f Back", callback_data: "back_main" }],
+    [{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }],
   ];
 }
 
-// ─── Buy alert (from blockchain listener) ───────────────────────
+// ─── Buy alert (compact, for groups) ────────────────────────────
 
 export function formatBuyAlert(trade) {
-  const { symbol, ethAmount, usdAmount, mcap, volume24h, buyer, txHash, bondingProgress, graduated } = trade;
+  const { symbol, ethAmount, usdAmount, mcap, volume24h, graduated, bondingProgress } = trade;
 
   const ethStr = ethAmount < 0.001 ? ethAmount.toFixed(6) : ethAmount < 1 ? ethAmount.toFixed(4) : ethAmount.toFixed(3);
   const usdStr = fmtUsd(usdAmount);
   const mcapStr = mcap ? fmtUsd(mcap) : "N/A";
-  const volStr = volume24h ? fmtUsd(volume24h) : "N/A";
+  const volStr = volume24h ? fmtUsd(volume24h) : "";
 
-  const buyerLink = `<a href="https://etherscan.io/address/${buyer}">Buyer</a>`;
-  const txLink = txHash ? ` | <a href="https://etherscan.io/tx/${txHash}">Etherscan</a>` : "";
+  // Green circles based on buy size
+  const circleCount = Math.min(Math.max(Math.ceil(ethAmount * 10), 1), 10);
+  const circles = "\ud83d\udfe2".repeat(circleCount);
 
   const lines = [
-    `\ud83d\udfe2 <b>BUY \u2014 $${esc(symbol)}</b>`,
-    `\ud83d\udcb0 ${ethStr} ETH (${usdStr})`,
-    `\ud83d\udcca MC: ${mcapStr} | Vol 24h: ${volStr}`,
+    `\ud83d\udfe2 <b>${usdStr} ${esc(symbol)} BUY</b>`,
+    circles,
+    ``,
+    `\u27a1\ufe0f ${ethStr} ETH (${usdStr})`,
   ];
 
   if (!graduated && bondingProgress != null && bondingProgress > 0) {
-    const pct = Math.round(bondingProgress);
-    const filled = Math.round(pct / 10);
-    const bar = "\u2588".repeat(filled) + "\u2591".repeat(10 - filled);
-    lines.push(`\ud83c\udf1f Bonding: [${bar}] ${pct}%`);
+    lines.push(`\ud83d\udcca MC: ${mcapStr} \u00b7 Bonding ${Math.round(bondingProgress)}%`);
+  } else {
+    const volPart = volStr ? ` \u00b7 Vol: ${volStr} 24h` : "";
+    lines.push(`\ud83d\udcca MC: ${mcapStr}${volPart}`);
   }
-
-  lines.push(`\ud83d\udd17 ${buyerLink}${txLink}`);
-  lines.push("");
-
-  const xpadLink = `<a href="https://xpad.fun/token/${trade.tokenAddress}">\ud83d\udcc8 xpad</a>`;
-  const dexLink = `<a href="https://dexscreener.com/ethereum/${trade.tokenAddress}">\ud83d\udcca DexScreener</a>`;
-  lines.push(`${xpadLink} | ${dexLink}`);
 
   return lines.join("\n");
 }
 
-// ─── Momentum / trending update (every 2h) ──────────────────────
+export function formatBuyAlertButtons(trade) {
+  return [
+    [
+      { text: "\ud83d\udcca xpad", url: `https://xpad.fun/token/${trade.tokenAddress}` },
+      { text: "\ud83d\udcc8 DexScreener", url: `https://dexscreener.com/ethereum/${trade.tokenAddress}` },
+    ],
+  ];
+}
+
+// ─── Alert broadcasts ───────────────────────────────────────────
+
+export function formatNewLaunchAlert(t) {
+  return [
+    `\ud83d\ude80 <b>NEW TOKEN LAUNCHED</b>`,
+    ``,
+    `<b>${esc(t.name)} ($${esc(t.symbol)})</b>`,
+    t.mcap > 0 ? `\ud83d\udcb0 MC: ${fmtUsd(t.mcap)}` : "",
+    ``,
+    `<code>${t.address}</code>`,
+  ].filter(Boolean).join("\n");
+}
+
+export function formatGraduationAlert(t) {
+  return [
+    `\ud83c\udf93 <b>TOKEN GRADUATED!</b>`,
+    ``,
+    `<b>${esc(t.name)} ($${esc(t.symbol)})</b>`,
+    `\ud83d\udcb0 MC: ${fmtUsd(t.mcap)}`,
+    t.holders > 0 ? `\ud83d\udc65 Holders: ${fmtNum(t.holders)}` : "",
+    ``,
+    `Now trading on Uniswap V2!`,
+  ].filter(Boolean).join("\n");
+}
+
+export function formatTrendingAlert(tokens) {
+  const lines = [
+    `\ud83d\udd25 <b>TRENDING UPDATE</b>`,
+    ``,
+    `\u2501\u2501\u2501 TOP TOKENS \u2501\u2501\u2501`,
+    ``,
+  ];
+  for (let i = 0; i < Math.min(5, tokens.length); i++) {
+    const t = tokens[i];
+    const mcStr = t.mcap > 0 ? fmtUsd(t.mcap) + " MC" : "";
+    const changeStr = t.priceChange24h ? fmtPct(t.priceChange24h) : "";
+    const parts = [mcStr, changeStr].filter(Boolean);
+    lines.push(`${i + 1}. <b>${esc(t.symbol)}</b> \u00b7 ${parts.join(" \u00b7 ")}`);
+  }
+  return lines.join("\n");
+}
+
+// ─── Momentum update (every 2h to groups) ───────────────────────
 
 export function formatMomentumUpdate(movers, topVolume, newLaunches) {
-  const lines = ["\ud83d\udd25 <b>XPAD TRENDING UPDATE</b>", ""];
+  const lines = [
+    `\ud83d\udd25 <b>XPAD TRENDING UPDATE</b>`,
+    ``,
+  ];
 
-  for (const m of movers) {
-    const dir = m.change >= 0 ? "+" : "";
-    const period = m.period || "1h";
-    lines.push(`\ud83d\udcc8 <b>$${esc(m.symbol)}</b> ${dir}${Math.round(m.change)}% (${period}) \u2014 ${fmtUsd(m.mcap)} MC`);
+  if (movers.length > 0) {
+    lines.push(`\u2501\u2501\u2501 TOP MOVERS \u2501\u2501\u2501`);
+    lines.push(``);
+    for (const m of movers) {
+      const dir = m.change >= 0 ? "\ud83d\udcc8" : "\ud83d\udcc9";
+      const sign = m.change >= 0 ? "+" : "";
+      const period = m.period || "1h";
+      lines.push(`${dir} <b>${esc(m.symbol)}</b> ${sign}${Math.round(m.change)}% (${period}) \u00b7 ${fmtUsd(m.mcap)} MC`);
+    }
+    lines.push(``);
   }
 
-  for (const n of newLaunches) {
-    const pct = n.bondingProgress > 0 ? ` \u2014 Bonding ${Math.round(n.bondingProgress)}%` : "";
-    lines.push(`\ud83c\udd95 <b>$${esc(n.symbol)}</b> just launched${pct}`);
+  if (newLaunches.length > 0) {
+    lines.push(`\u2501\u2501\u2501 NEW LAUNCHES \u2501\u2501\u2501`);
+    lines.push(``);
+    for (const n of newLaunches) {
+      const pct = n.bondingProgress > 0 ? ` \u00b7 Bonding ${Math.round(n.bondingProgress)}%` : "";
+      lines.push(`\ud83c\udd95 <b>${esc(n.symbol)}</b> just launched${pct}`);
+    }
+    lines.push(``);
   }
 
   if (topVolume) {
-    lines.push("");
-    lines.push(`\ud83c\udfc6 Top Volume: <b>$${esc(topVolume.symbol)}</b> (${fmtUsd(topVolume.volume24h)} 24h)`);
+    lines.push(`\ud83c\udfc6 Top Volume: <b>${esc(topVolume.symbol)}</b> (${fmtUsd(topVolume.volume24h)} 24h)`);
   }
 
   return lines.join("\n");
+}
+
+// ─── Top Holders placeholder ────────────────────────────────────
+
+export function formatTopHolders() {
+  return [
+    `<b>\ud83d\udc8e TOP HOLDERS</b>`,
+    ``,
+    `Coming soon! Top holders across all xpad tokens.`,
+  ].join("\n");
+}
+
+// ─── Whale Alerts placeholder ───────────────────────────────────
+
+export function formatWhaleAlerts() {
+  return [
+    `<b>\ud83d\udc0b WHALE ALERTS</b>`,
+    ``,
+    `Large buys (>0.1 ETH) are posted here automatically.`,
+    ``,
+    `Toggle whale alerts in your /alerts settings.`,
+  ].join("\n");
+}
+
+// ─── Settings placeholder ───────────────────────────────────────
+
+export function formatSettings() {
+  return [
+    `<b>\u2699\ufe0f SETTINGS</b>`,
+    ``,
+    `\ud83d\udd14 Alerts \u2014 Configure your notifications`,
+    ``,
+    `More settings coming soon.`,
+  ].join("\n");
+}
+
+export function settingsKeyboard() {
+  return [
+    [{ text: "\ud83d\udd14 Alert Settings", callback_data: "menu_alerts" }],
+    [{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }],
+  ];
 }
 
 // ─── Help text ──────────────────────────────────────────────────
 
 export function formatHelp() {
   return [
-    "<b>\ud83d\udc7b xpad Trending Bot \u2014 Help</b>",
-    "",
-    "/start \u2014 Main menu",
-    "/trending \u2014 Top trending tokens",
-    "/new \u2014 Latest launches",
-    "/graduated \u2014 Graduated tokens",
-    "/token &lt;symbol&gt; \u2014 Token details",
-    "/stats \u2014 Platform stats",
-    "/alerts \u2014 Alert settings",
-    "/help \u2014 This message",
-    "",
-    "The bot automatically posts buy alerts for all xpad tokens in every group it's added to.",
+    `<b>\ud83c\udfc6 XPAD TRENDING BOT \u2014 Help</b>`,
+    ``,
+    `\u2501\u2501\u2501 COMMANDS \u2501\u2501\u2501`,
+    ``,
+    `/start \u2014 Main menu`,
+    `/trending \u2014 Top trending tokens`,
+    `/new \u2014 Latest launches`,
+    `/graduated \u2014 Graduated tokens`,
+    `/token &lt;symbol&gt; \u2014 Token details`,
+    `/stats \u2014 Platform stats`,
+    `/alerts \u2014 Alert settings`,
+    `/help \u2014 This message`,
+    ``,
+    `\u2501\u2501\u2501 FEATURES \u2501\u2501\u2501`,
+    ``,
+    `\ud83d\udce1 Auto buy alerts in groups`,
+    `\ud83d\udd25 Trending updates every 2h`,
+    `\ud83c\udf93 Graduation notifications`,
+    `\ud83d\udc0b Whale buy alerts (>0.1 ETH)`,
   ].join("\n");
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────
+// ─── Loading state ──────────────────────────────────────────────
+
+export function formatLoading(section) {
+  return `\u23f3 Loading ${section || "data"}...`;
+}
+
+// ─── Helpers ────────────────────────────────────────────────────
 
 function esc(str) {
   if (!str) return "";

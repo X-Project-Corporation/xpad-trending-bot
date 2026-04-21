@@ -12,20 +12,31 @@ import {
   setCallbacks,
 } from "./fetcher.js";
 import {
+  formatWelcome,
+  welcomeKeyboard,
+  formatGroupWelcome,
   formatTrendingList,
   formatTrendingButtons,
   formatNewList,
+  formatNewButtons,
   formatGraduatedList,
+  formatGraduatedButtons,
   formatTokenDetail,
   formatTokenButtons,
   formatStats,
+  formatStatsButtons,
   formatAlertsSettings,
   alertsKeyboard,
   formatNewLaunchAlert,
   formatGraduationAlert,
   formatTrendingAlert,
   formatBuyAlert,
+  formatBuyAlertButtons,
   formatMomentumUpdate,
+  formatTopHolders,
+  formatWhaleAlerts,
+  formatSettings,
+  settingsKeyboard,
   formatHelp,
 } from "./formatter.js";
 import { startListener, getEthPrice } from "./listener.js";
@@ -60,7 +71,6 @@ async function processQueue() {
   while (sendQueue.length > 0) {
     const { chatId, text, opts } = sendQueue.shift();
     if (!canSendToGroup(chatId)) {
-      // Re-queue with a small delay
       sendQueue.unshift({ chatId, text, opts });
       await new Promise((r) => setTimeout(r, 1000));
       continue;
@@ -94,6 +104,12 @@ function safeSend(chatId, text, opts) {
   });
 }
 
+// ─── Helper: detect group chat ──────────────────────────────────
+
+function isGroup(msg) {
+  return msg.chat.type === "group" || msg.chat.type === "supergroup";
+}
+
 // ─── Group tracking: my_chat_member ─────────────────────────────
 
 bot.on("my_chat_member", (update) => {
@@ -101,7 +117,6 @@ bot.on("my_chat_member", (update) => {
   const newStatus = update.new_chat_member?.status;
   const chatType = chat.type;
 
-  // Only track groups/supergroups
   if (chatType !== "group" && chatType !== "supergroup") return;
 
   if (newStatus === "member" || newStatus === "administrator") {
@@ -113,62 +128,59 @@ bot.on("my_chat_member", (update) => {
   }
 });
 
-// ─── Main menu ───────────────────────────────────────────────────
+// ─── Edit or send helper ────────────────────────────────────────
 
-const MAIN_MENU = {
-  inline_keyboard: [
-    [
-      { text: "\ud83d\udd25 Trending", callback_data: "menu_trending" },
-      { text: "\ud83c\udd95 New Launches", callback_data: "menu_new" },
-    ],
-    [
-      { text: "\ud83c\udf93 Graduated", callback_data: "menu_graduated" },
-      { text: "\ud83d\udcca Stats", callback_data: "menu_stats" },
-    ],
-    [{ text: "\ud83d\udd14 Alerts", callback_data: "menu_alerts" }],
-  ],
-};
-
-function mainMenuText() {
-  return [
-    "<b>\ud83d\udc7b xpad Trending Bot</b>",
-    "",
-    "Track every token on xpad.fun \u2014 trending, new launches, graduations, and alerts.",
-    "",
-    "Choose an option:",
-  ].join("\n");
+function editOrSend(chatId, text, opts, editMessageId) {
+  if (editMessageId) {
+    bot.editMessageText(text, { chat_id: chatId, message_id: editMessageId, ...opts }).catch(() => {});
+  } else {
+    bot.sendMessage(chatId, text, opts).catch((err) => handleSendError(chatId, err));
+  }
 }
 
 // ─── /start & /menu ─────────────────────────────────────────────
 
 bot.onText(/\/start/, (msg) => {
-  // Auto-register group when someone uses /start
-  if (msg.chat.type === "group" || msg.chat.type === "supergroup") {
+  if (isGroup(msg)) {
     addGroup(msg.chat.id, msg.chat.title);
+    bot.sendMessage(msg.chat.id, formatGroupWelcome(), {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    });
+  } else {
+    sendWelcome(msg.chat.id);
   }
-  bot.sendMessage(msg.chat.id, mainMenuText(), {
-    parse_mode: "HTML",
-    reply_markup: MAIN_MENU,
-    disable_web_page_preview: true,
-  });
 });
 
 bot.onText(/\/menu/, (msg) => {
-  if (msg.chat.type === "group" || msg.chat.type === "supergroup") {
+  if (isGroup(msg)) {
     addGroup(msg.chat.id, msg.chat.title);
+    bot.sendMessage(msg.chat.id, formatGroupWelcome(), {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+    });
+  } else {
+    sendWelcome(msg.chat.id);
   }
-  bot.sendMessage(msg.chat.id, mainMenuText(), {
-    parse_mode: "HTML",
-    reply_markup: MAIN_MENU,
-    disable_web_page_preview: true,
-  });
 });
+
+function sendWelcome(chatId, editMessageId) {
+  const stats = getPlatformStats();
+  const text = formatWelcome(stats);
+  const opts = {
+    parse_mode: "HTML",
+    reply_markup: welcomeKeyboard(),
+    disable_web_page_preview: true,
+  };
+  editOrSend(chatId, text, opts, editMessageId);
+}
 
 // ─── /help ──────────────────────────────────────────────────────
 
 bot.onText(/\/help/, (msg) => {
   bot.sendMessage(msg.chat.id, formatHelp(), {
     parse_mode: "HTML",
+    reply_markup: { inline_keyboard: [[{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }]] },
     disable_web_page_preview: true,
   });
 });
@@ -181,13 +193,8 @@ function sendTrending(chatId, editMessageId) {
   const tokens = getTrending(10);
   const text = formatTrendingList(tokens);
   const buttons = formatTrendingButtons();
-
   const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: buttons }, disable_web_page_preview: true };
-  if (editMessageId) {
-    bot.editMessageText(text, { chat_id: chatId, message_id: editMessageId, ...opts }).catch(() => {});
-  } else {
-    bot.sendMessage(chatId, text, opts);
-  }
+  editOrSend(chatId, text, opts, editMessageId);
 }
 
 // ─── /new ────────────────────────────────────────────────────────
@@ -197,18 +204,9 @@ bot.onText(/\/new/, (msg) => sendNew(msg.chat.id));
 function sendNew(chatId, editMessageId) {
   const tokens = getNewTokens(10);
   const text = formatNewList(tokens);
-  const buttons = tokens.map((t) => [
-    { text: `\ud83d\udcc8 ${t.symbol}`, url: `https://xpad.fun/token/${t.address}` },
-    { text: "\ud83d\udcb0 Buy", url: `https://xpad.fun/token/${t.address}` },
-  ]);
-  buttons.push([{ text: "\u25c0\ufe0f Back", callback_data: "back_main" }]);
-
+  const buttons = formatNewButtons(tokens);
   const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: buttons }, disable_web_page_preview: true };
-  if (editMessageId) {
-    bot.editMessageText(text, { chat_id: chatId, message_id: editMessageId, ...opts }).catch(() => {});
-  } else {
-    bot.sendMessage(chatId, text, opts);
-  }
+  editOrSend(chatId, text, opts, editMessageId);
 }
 
 // ─── /graduated ──────────────────────────────────────────────────
@@ -218,18 +216,9 @@ bot.onText(/\/graduated/, (msg) => sendGraduated(msg.chat.id));
 function sendGraduated(chatId, editMessageId) {
   const tokens = getGraduatedTokens(10);
   const text = formatGraduatedList(tokens);
-  const buttons = tokens.map((t) => [
-    { text: `\ud83d\udcc8 ${t.symbol}`, url: `https://xpad.fun/token/${t.address}` },
-    { text: "\ud83e\udd84 DexScreener", url: `https://dexscreener.com/ethereum/${t.pairAddress || t.address}` },
-  ]);
-  buttons.push([{ text: "\u25c0\ufe0f Back", callback_data: "back_main" }]);
-
+  const buttons = formatGraduatedButtons(tokens);
   const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: buttons }, disable_web_page_preview: true };
-  if (editMessageId) {
-    bot.editMessageText(text, { chat_id: chatId, message_id: editMessageId, ...opts }).catch(() => {});
-  } else {
-    bot.sendMessage(chatId, text, opts);
-  }
+  editOrSend(chatId, text, opts, editMessageId);
 }
 
 // ─── /token <address|symbol> ─────────────────────────────────────
@@ -242,24 +231,17 @@ bot.onText(/\/token\s+(.+)/, (msg, match) => {
 function sendTokenDetail(chatId, query, editMessageId) {
   const token = getToken(query);
   if (!token) {
-    const text = "Token not found. Try an address or symbol.";
-    if (editMessageId) {
-      bot.editMessageText(text, { chat_id: chatId, message_id: editMessageId }).catch(() => {});
-    } else {
-      bot.sendMessage(chatId, text);
-    }
+    const text = "\u274c Token not found. Try an address or symbol.";
+    const opts = {
+      reply_markup: { inline_keyboard: [[{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }]] },
+    };
+    editOrSend(chatId, text, opts, editMessageId);
     return;
   }
   const text = formatTokenDetail(token);
   const buttons = formatTokenButtons(token);
-  buttons.push([{ text: "\u25c0\ufe0f Back", callback_data: "back_main" }]);
-
   const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: buttons }, disable_web_page_preview: true };
-  if (editMessageId) {
-    bot.editMessageText(text, { chat_id: chatId, message_id: editMessageId, ...opts }).catch(() => {});
-  } else {
-    bot.sendMessage(chatId, text, opts);
-  }
+  editOrSend(chatId, text, opts, editMessageId);
 }
 
 // ─── /alerts ─────────────────────────────────────────────────────
@@ -270,13 +252,8 @@ function sendAlerts(chatId, editMessageId) {
   const alerts = getAlerts(chatId);
   const text = formatAlertsSettings(alerts);
   const kb = alertsKeyboard(alerts);
-
   const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: kb }, disable_web_page_preview: true };
-  if (editMessageId) {
-    bot.editMessageText(text, { chat_id: chatId, message_id: editMessageId, ...opts }).catch(() => {});
-  } else {
-    bot.sendMessage(chatId, text, opts);
-  }
+  editOrSend(chatId, text, opts, editMessageId);
 }
 
 // ─── /stats ──────────────────────────────────────────────────────
@@ -285,15 +262,56 @@ bot.onText(/\/stats/, (msg) => sendStats(msg.chat.id));
 
 function sendStats(chatId, editMessageId) {
   const stats = getPlatformStats();
-  const text = formatStats(stats);
-  const buttons = [[{ text: "\u25c0\ufe0f Back", callback_data: "back_main" }]];
+  const allTokens = getAllTokens();
 
+  // Find top token by mcap
+  const topToken = allTokens.reduce((best, t) => {
+    if ((t.mcap || 0) > (best?.mcap || 0)) return t;
+    return best;
+  }, null);
+
+  // Find latest launch
+  const latestLaunch = allTokens
+    .filter((t) => t.createdAt)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+
+  // Compute total mcap
+  stats.totalMcap = allTokens.reduce((s, t) => s + (t.mcap || 0), 0);
+
+  const text = formatStats(stats, topToken, latestLaunch);
+  const buttons = formatStatsButtons();
   const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: buttons }, disable_web_page_preview: true };
-  if (editMessageId) {
-    bot.editMessageText(text, { chat_id: chatId, message_id: editMessageId, ...opts }).catch(() => {});
-  } else {
-    bot.sendMessage(chatId, text, opts);
-  }
+  editOrSend(chatId, text, opts, editMessageId);
+}
+
+// ─── Top Holders ─────────────────────────────────────────────────
+
+function sendTopHolders(chatId, editMessageId) {
+  const text = formatTopHolders();
+  const buttons = [[{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }]];
+  const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: buttons }, disable_web_page_preview: true };
+  editOrSend(chatId, text, opts, editMessageId);
+}
+
+// ─── Whale Alerts ────────────────────────────────────────────────
+
+function sendWhaleAlerts(chatId, editMessageId) {
+  const text = formatWhaleAlerts();
+  const buttons = [
+    [{ text: "\ud83d\udd14 Alert Settings", callback_data: "menu_alerts" }],
+    [{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }],
+  ];
+  const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: buttons }, disable_web_page_preview: true };
+  editOrSend(chatId, text, opts, editMessageId);
+}
+
+// ─── Settings ────────────────────────────────────────────────────
+
+function sendSettings(chatId, editMessageId) {
+  const text = formatSettings();
+  const kb = settingsKeyboard();
+  const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: kb }, disable_web_page_preview: true };
+  editOrSend(chatId, text, opts, editMessageId);
 }
 
 // ─── Callback query handler ─────────────────────────────────────
@@ -305,27 +323,28 @@ bot.on("callback_query", (query) => {
 
   bot.answerCallbackQuery(query.id).catch(() => {});
 
-  if (data === "back_main") {
-    bot.editMessageText(mainMenuText(), {
-      chat_id: chatId,
-      message_id: msgId,
-      parse_mode: "HTML",
-      reply_markup: MAIN_MENU,
-    }).catch(() => {});
-    return;
-  }
-
+  if (data === "back_main") { sendWelcome(chatId, msgId); return; }
   if (data === "menu_trending") { sendTrending(chatId, msgId); return; }
   if (data === "menu_new") { sendNew(chatId, msgId); return; }
   if (data === "menu_graduated") { sendGraduated(chatId, msgId); return; }
   if (data === "menu_stats") { sendStats(chatId, msgId); return; }
   if (data === "menu_alerts") { sendAlerts(chatId, msgId); return; }
+  if (data === "menu_settings") { sendSettings(chatId, msgId); return; }
+  if (data === "menu_top_holders") { sendTopHolders(chatId, msgId); return; }
+  if (data === "menu_whale_alerts") { sendWhaleAlerts(chatId, msgId); return; }
 
   // Alert toggles
   if (data.startsWith("alert_toggle_")) {
     const alertType = data.replace("alert_toggle_", "");
     toggleAlert(chatId, alertType);
     sendAlerts(chatId, msgId);
+    return;
+  }
+
+  // Token detail from callback (token_detail_<address>)
+  if (data.startsWith("token_detail_")) {
+    const addr = data.replace("token_detail_", "");
+    sendTokenDetail(chatId, addr, msgId);
     return;
   }
 });
@@ -337,12 +356,7 @@ function broadcastBuyAlert(trade) {
   if (!groups.length) return;
 
   const text = formatBuyAlert(trade);
-  const kb = [
-    [
-      { text: "\ud83d\udcc8 xpad", url: `https://xpad.fun/token/${trade.tokenAddress}` },
-      { text: "\ud83d\udcca DexScreener", url: `https://dexscreener.com/ethereum/${trade.tokenAddress}` },
-    ],
-  ];
+  const kb = formatBuyAlertButtons(trade);
   const opts = {
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: kb },
@@ -357,7 +371,6 @@ function broadcastBuyAlert(trade) {
   if (trade.ethAmount >= 0.1) {
     const bigBuyChats = getChatsWithAlert("bigBuys");
     for (const chatId of bigBuyChats) {
-      // Don't double-send to groups
       if (!groups.includes(chatId)) {
         enqueueSend(chatId, text, opts);
       }
@@ -388,7 +401,7 @@ function broadcastGraduation(token) {
   const text = formatGraduationAlert(token);
   const kb = [
     [
-      { text: "\ud83d\udcc8 Chart", url: `https://xpad.fun/token/${token.address}` },
+      { text: "\ud83d\udcca Chart", url: `https://xpad.fun/token/${token.address}` },
       { text: "\ud83e\udd84 DexScreener", url: `https://dexscreener.com/ethereum/${token.pairAddress || token.address}` },
     ],
   ];
@@ -429,13 +442,11 @@ function broadcastMomentumUpdate() {
   const movers = [];
   const now = Date.now();
   const oneHourAgo = now - 3_600_000;
-  const twentyFourHoursAgo = now - 24 * 3_600_000;
 
   for (const token of allTokens) {
     const snaps = getSnapshots(token.address);
     if (!snaps.length) continue;
 
-    // Find snapshot closest to 1h ago
     let snap1h = null;
     for (const s of snaps) {
       if (s.ts <= oneHourAgo) snap1h = s;
@@ -450,7 +461,6 @@ function broadcastMomentumUpdate() {
 
     // Check 24h movers with >50% move
     if (token.priceChange24h && Math.abs(token.priceChange24h) >= 50) {
-      // Don't duplicate if already in 1h movers
       if (!movers.find((m) => m.symbol === token.symbol)) {
         movers.push({ symbol: token.symbol, change: token.priceChange24h, mcap: token.mcap, period: "24h" });
       }
@@ -473,7 +483,6 @@ function broadcastMomentumUpdate() {
   // Only post if there's something interesting
   if (movers.length === 0 && newLaunches.length === 0) return;
 
-  // Sort movers by absolute change
   movers.sort((a, b) => Math.abs(b.change) - Math.abs(a.change));
   const topMovers = movers.slice(0, 5);
 
