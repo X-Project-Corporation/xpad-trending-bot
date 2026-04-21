@@ -1,0 +1,14 @@
+{
+  "name": "xpad-trending-bot",
+  "version": "1.0.0",
+  "description": "Telegram trending & alerts bot for all xpad.fun tokens",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
