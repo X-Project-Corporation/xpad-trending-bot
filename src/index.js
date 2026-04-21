@@ -1,7 +1,7 @@
 import "./health.js";
 import { load } from "./store.js";
 import { startFetcher } from "./fetcher.js";
-import "./bot.js";
+import "./bot.js"; // bot.js starts the listener internally
 
 // Prevent crashes from unhandled errors
 process.on("uncaughtException", (err) => {
@@ -11,7 +11,7 @@ process.on("unhandledRejection", (err) => {
   console.error("Unhandled rejection (kept alive):", err?.message || err);
 });
 
-// Load persisted store (alert configs)
+// Load persisted store (alert configs + group list)
 load();
 console.log("Store loaded");
 

@@ -5,7 +5,7 @@ import { DATA_DIR } from "./config.js";
 const STORE_PATH = path.join(DATA_DIR, "store.json");
 const BACKUP_PATH = path.join(DATA_DIR, "store.backup.json");
 
-let data = { chats: {} };
+let data = { chats: {}, groups: {} };
 let saveTimer = null;
 
 // ─── Load / Save ─────────────────────────────────────────────────
@@ -15,7 +15,7 @@ export function load() {
   console.warn("Main store failed, trying backup...");
   if (tryLoad(BACKUP_PATH)) { save(); return; }
   console.warn("No store found, starting fresh.");
-  data = { chats: {} };
+  data = { chats: {}, groups: {} };
 }
 
 function tryLoad(filepath) {
@@ -24,7 +24,8 @@ function tryLoad(filepath) {
       const parsed = JSON.parse(fs.readFileSync(filepath, "utf-8"));
       if (parsed && parsed.chats) {
         data = parsed;
-        console.log(`Store loaded from ${path.basename(filepath)} (${Object.keys(data.chats).length} chats)`);
+        if (!data.groups) data.groups = {};
+        console.log(`Store loaded from ${path.basename(filepath)} (${Object.keys(data.chats).length} chats, ${Object.keys(data.groups).length} groups)`);
         return true;
       }
     }
@@ -53,7 +54,7 @@ function debouncedSave() {
   saveTimer = setTimeout(() => save(), 500);
 }
 
-// ─── Chat alert config ───────────────────────────────────────────
+// ─── Chat alert config (private chats + groups that toggle alerts) ──
 
 function getChat(chatId) {
   const key = String(chatId);
@@ -97,4 +98,47 @@ export function getChatsWithAlert(alertType) {
 export function removeChat(chatId) {
   delete data.chats[String(chatId)];
   debouncedSave();
+}
+
+// ─── Group tracking (for buy alerts broadcast) ───────────────────
+
+/** Add a group to the broadcast list. */
+export function addGroup(chatId, title) {
+  const key = String(chatId);
+  if (!data.groups[key]) {
+    data.groups[key] = {
+      title: title || "Unknown",
+      addedAt: new Date().toISOString(),
+    };
+    debouncedSave();
+    console.log(`Group added: ${key} (${title})`);
+  } else {
+    // Update title if changed
+    if (title && data.groups[key].title !== title) {
+      data.groups[key].title = title;
+      debouncedSave();
+    }
+  }
+}
+
+/** Remove a group from the broadcast list. */
+export function removeGroup(chatId) {
+  const key = String(chatId);
+  if (data.groups[key]) {
+    delete data.groups[key];
+    debouncedSave();
+    console.log(`Group removed: ${key}`);
+  }
+  // Also remove from chats if present
+  removeChat(chatId);
+}
+
+/** Get all group chat IDs for broadcasting. */
+export function getAllGroups() {
+  return Object.keys(data.groups);
+}
+
+/** Get group count. */
+export function getGroupCount() {
+  return Object.keys(data.groups).length;
 }

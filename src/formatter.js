@@ -248,6 +248,85 @@ export function alertsKeyboard(alerts) {
   ];
 }
 
+// ─── Buy alert (from blockchain listener) ───────────────────────
+
+export function formatBuyAlert(trade) {
+  const { symbol, ethAmount, usdAmount, mcap, volume24h, buyer, txHash, bondingProgress, graduated } = trade;
+
+  const ethStr = ethAmount < 0.001 ? ethAmount.toFixed(6) : ethAmount < 1 ? ethAmount.toFixed(4) : ethAmount.toFixed(3);
+  const usdStr = fmtUsd(usdAmount);
+  const mcapStr = mcap ? fmtUsd(mcap) : "N/A";
+  const volStr = volume24h ? fmtUsd(volume24h) : "N/A";
+
+  const buyerLink = `<a href="https://etherscan.io/address/${buyer}">Buyer</a>`;
+  const txLink = txHash ? ` | <a href="https://etherscan.io/tx/${txHash}">Etherscan</a>` : "";
+
+  const lines = [
+    `\ud83d\udfe2 <b>BUY \u2014 $${esc(symbol)}</b>`,
+    `\ud83d\udcb0 ${ethStr} ETH (${usdStr})`,
+    `\ud83d\udcca MC: ${mcapStr} | Vol 24h: ${volStr}`,
+  ];
+
+  if (!graduated && bondingProgress != null && bondingProgress > 0) {
+    const pct = Math.round(bondingProgress);
+    const filled = Math.round(pct / 10);
+    const bar = "\u2588".repeat(filled) + "\u2591".repeat(10 - filled);
+    lines.push(`\ud83c\udf1f Bonding: [${bar}] ${pct}%`);
+  }
+
+  lines.push(`\ud83d\udd17 ${buyerLink}${txLink}`);
+  lines.push("");
+
+  const xpadLink = `<a href="https://xpad.fun/token/${trade.tokenAddress}">\ud83d\udcc8 xpad</a>`;
+  const dexLink = `<a href="https://dexscreener.com/ethereum/${trade.tokenAddress}">\ud83d\udcca DexScreener</a>`;
+  lines.push(`${xpadLink} | ${dexLink}`);
+
+  return lines.join("\n");
+}
+
+// ─── Momentum / trending update (every 2h) ──────────────────────
+
+export function formatMomentumUpdate(movers, topVolume, newLaunches) {
+  const lines = ["\ud83d\udd25 <b>XPAD TRENDING UPDATE</b>", ""];
+
+  for (const m of movers) {
+    const dir = m.change >= 0 ? "+" : "";
+    const period = m.period || "1h";
+    lines.push(`\ud83d\udcc8 <b>$${esc(m.symbol)}</b> ${dir}${Math.round(m.change)}% (${period}) \u2014 ${fmtUsd(m.mcap)} MC`);
+  }
+
+  for (const n of newLaunches) {
+    const pct = n.bondingProgress > 0 ? ` \u2014 Bonding ${Math.round(n.bondingProgress)}%` : "";
+    lines.push(`\ud83c\udd95 <b>$${esc(n.symbol)}</b> just launched${pct}`);
+  }
+
+  if (topVolume) {
+    lines.push("");
+    lines.push(`\ud83c\udfc6 Top Volume: <b>$${esc(topVolume.symbol)}</b> (${fmtUsd(topVolume.volume24h)} 24h)`);
+  }
+
+  return lines.join("\n");
+}
+
+// ─── Help text ──────────────────────────────────────────────────
+
+export function formatHelp() {
+  return [
+    "<b>\ud83d\udc7b xpad Trending Bot \u2014 Help</b>",
+    "",
+    "/start \u2014 Main menu",
+    "/trending \u2014 Top trending tokens",
+    "/new \u2014 Latest launches",
+    "/graduated \u2014 Graduated tokens",
+    "/token &lt;symbol&gt; \u2014 Token details",
+    "/stats \u2014 Platform stats",
+    "/alerts \u2014 Alert settings",
+    "/help \u2014 This message",
+    "",
+    "The bot automatically posts buy alerts for all xpad tokens in every group it's added to.",
+  ].join("\n");
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────
 
 function esc(str) {
