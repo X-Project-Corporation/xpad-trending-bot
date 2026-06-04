@@ -1,4 +1,4 @@
-import { XPAD_API_URL } from "./config.js";
+import { XPAD_API_URL, CHAINS } from "./config.js";
 
 // ─── Hidden tokens (test/spam) ─────────────────────────────────
 
@@ -174,10 +174,24 @@ let lastSnapshotTime = 0;
 
 async function fetchAllTokens() {
   try {
-    const res = await fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200`);
-    if (!res.ok) throw new Error(`Token list ${res.status}`);
-    const list = await res.json();
-    let tokenList = Array.isArray(list) ? list : list.tokens || [];
+    // Fetch from both chains in parallel
+    const [ethRes, baseRes] = await Promise.allSettled([
+      fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=1`),
+      fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=8453`),
+    ]);
+
+    let tokenList = [];
+    for (const [chainKey, result] of [["ethereum", ethRes], ["base", baseRes]]) {
+      if (result.status !== "fulfilled" || !result.value.ok) continue;
+      const json = await result.value.json();
+      const list = Array.isArray(json) ? json : json.tokens || [];
+      // Tag each token with its chain
+      for (const t of list) {
+        t._chainKey = chainKey;
+        t._chainId = CHAINS[chainKey].chainId;
+      }
+      tokenList.push(...list);
+    }
 
     // Deduplicate tokens with same name+symbol
     tokenList = dedupeTokenList(tokenList);
@@ -223,8 +237,9 @@ async function fetchAllTokens() {
         dexPromises.push(
           (async () => {
             try {
+              const dexChain = CHAINS[tData._chainKey || "ethereum"]?.dexScreenerChain || "ethereum";
               const dRes = await fetch(
-                `https://api.dexscreener.com/latest/dex/pairs/ethereum/${pairAddr}`
+                `https://api.dexscreener.com/latest/dex/pairs/${dexChain}/${pairAddr}`
               );
               if (dRes.ok) {
                 const dJson = await dRes.json();
@@ -267,6 +282,7 @@ async function fetchAllTokens() {
 
       const token = {
         address: addr,
+        chainKey: raw._chainKey || existing.chainKey || "ethereum",
         name: raw.name || detail?.name || existing.name || "Unknown",
         symbol: raw.symbol || detail?.symbol || existing.symbol || "???",
         status: isGraduated ? "graduated" : "bonding",

@@ -62,6 +62,25 @@ function timeAgo() {
   return "just now";
 }
 
+// Chain-aware URL helpers
+function tokenUrl(t) {
+  const path = t.chainKey === "base" ? "base" : "eth";
+  return `https://xpad.fun/${path}/${t.address}`;
+}
+
+function explorerUrl(t) {
+  return t.chainKey === "base" ? "https://basescan.org" : "https://etherscan.io";
+}
+
+function dexScreenerUrl(t) {
+  const chain = t.chainKey === "base" ? "base" : "ethereum";
+  return `https://dexscreener.com/${chain}/${t.pairAddress || t.address}`;
+}
+
+function chainBadge(t) {
+  return t.chainKey === "base" ? "\ud83d\udd35" : "\u26aa"; // 🔵 Base, ⚪ ETH
+}
+
 // ─── Welcome / Start (private chat) ─────────────────────────────
 
 export function formatWelcome(stats) {
@@ -143,8 +162,9 @@ export function formatTrendingList(tokens) {
     const t = tokens[i];
     const num = medals[i] || `${i + 1}.`;
     const name = t.name && t.name !== t.symbol ? ` \u00b7 ${esc(t.name)}` : "";
+    const badge = chainBadge(t);
 
-    lines.push(`${num} <b>${esc(t.symbol)}</b>${name}`);
+    lines.push(`${num} ${badge} <b>${esc(t.symbol)}</b>${name}`);
 
     // Line 2: MC + price change
     const mcStr = t.mcap > 0 ? `\ud83d\udcb0 ${fmtUsd(t.mcap)} MC` : "";
@@ -217,8 +237,8 @@ export function formatNewList(tokens) {
 
 export function formatNewButtons(tokens) {
   const buttons = tokens.slice(0, 5).map((t) => [
-    { text: `\ud83d\udcc8 ${t.symbol}`, url: `https://xpad.fun/token/${t.address}` },
-    { text: "\ud83d\udcb0 Buy", url: `https://xpad.fun/token/${t.address}` },
+    { text: `${chainBadge(t)} ${t.symbol}`, url: tokenUrl(t) },
+    { text: "\ud83d\udcb0 Buy", url: tokenUrl(t) },
   ]);
   buttons.push([{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }]);
   return buttons;
@@ -255,8 +275,8 @@ export function formatGraduatedList(tokens) {
 
 export function formatGraduatedButtons(tokens) {
   const buttons = tokens.slice(0, 5).map((t) => [
-    { text: `\ud83d\udcc8 ${t.symbol}`, url: `https://xpad.fun/token/${t.address}` },
-    { text: "\ud83e\udd84 DexScreener", url: `https://dexscreener.com/ethereum/${t.pairAddress || t.address}` },
+    { text: `${chainBadge(t)} ${t.symbol}`, url: tokenUrl(t) },
+    { text: "\ud83e\udd84 DexScreener", url: dexScreenerUrl(t) },
   ]);
   buttons.push([{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }]);
   return buttons;
@@ -301,18 +321,18 @@ export function formatTokenDetail(t) {
 export function formatTokenButtons(t) {
   const rows = [
     [
-      { text: "\ud83d\udcca Chart", url: `https://xpad.fun/token/${t.address}` },
-      { text: "\ud83d\udcb0 Buy on xpad", url: `https://xpad.fun/token/${t.address}` },
+      { text: "\ud83d\udcca Chart", url: tokenUrl(t) },
+      { text: "\ud83d\udcb0 Buy on xpad", url: tokenUrl(t) },
     ],
   ];
   if (t.status === "graduated") {
     rows.push([
-      { text: "\ud83d\udd0d Etherscan", url: `https://etherscan.io/token/${t.address}` },
-      { text: "\ud83d\udcc8 DexScreener", url: `https://dexscreener.com/ethereum/${t.pairAddress || t.address}` },
+      { text: "\ud83d\udd0d Explorer", url: `${explorerUrl(t)}/token/${t.address}` },
+      { text: "\ud83d\udcc8 DexScreener", url: dexScreenerUrl(t) },
     ]);
   } else {
     rows.push([
-      { text: "\ud83d\udd0d Etherscan", url: `https://etherscan.io/token/${t.address}` },
+      { text: "\ud83d\udd0d Explorer", url: `${explorerUrl(t)}/token/${t.address}` },
     ]);
   }
   rows.push([{ text: "\ud83d\udd19 Back to Trending", callback_data: "menu_trending" }]);
@@ -426,10 +446,13 @@ export function formatBuyAlert(trade) {
 }
 
 export function formatBuyAlertButtons(trade) {
+  const chainKey = trade.chainKey || "ethereum";
+  const path = chainKey === "base" ? "base" : "eth";
+  const dexChain = chainKey === "base" ? "base" : "ethereum";
   return [
     [
-      { text: "\ud83d\udcca xpad", url: `https://xpad.fun/token/${trade.tokenAddress}` },
-      { text: "\ud83d\udcc8 DexScreener", url: `https://dexscreener.com/ethereum/${trade.tokenAddress}` },
+      { text: "\ud83d\udcca xpad", url: `https://xpad.fun/${path}/${trade.tokenAddress}` },
+      { text: "\ud83d\udcc8 DexScreener", url: `https://dexscreener.com/${dexChain}/${trade.tokenAddress}` },
     ],
   ];
 }

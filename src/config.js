@@ -1,11 +1,46 @@
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 export const XPAD_API_URL = process.env.XPAD_API_URL || "https://api.xpad.fun";
 export const DATA_DIR = process.env.DATA_DIR || "./data";
-export const WSS_RPC_URL = process.env.WSS_RPC_URL || "wss://mainnet.infura.io/ws/v3/b59d9f35046c4907a97d27eae87e3845";
-export const WSS_RPC_FALLBACK = "wss://ethereum-rpc.publicnode.com";
-export const FACTORY_ADDRESS = process.env.FACTORY_ADDRESS || "0x01Ea841f961aF744eD25E5D6F7cF791aebeaa3F8";
+
+// Multi-chain config
+export const CHAINS = {
+  base: {
+    name: "Base",
+    chainId: 8453,
+    rpc: process.env.BASE_RPC_URL || "https://base-rpc.publicnode.com",
+    rpcFallback: "wss://base-rpc.publicnode.com",
+    factory: "0xf6efe0Ae024b168cF3d542412d5713C768A38644",
+    weth: "0x4200000000000000000000000000000000000006",
+    uniswapFactory: "0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6",
+    explorer: "https://basescan.org",
+    dexScreenerChain: "base",
+    xpadPath: "base",
+    pollingInterval: 4000,
+  },
+  ethereum: {
+    name: "Ethereum",
+    chainId: 1,
+    rpc: process.env.WSS_RPC_URL || "wss://mainnet.infura.io/ws/v3/b59d9f35046c4907a97d27eae87e3845",
+    rpcFallback: "wss://ethereum-rpc.publicnode.com",
+    factory: process.env.FACTORY_ADDRESS || "0x01Ea841f961aF744eD25E5D6F7cF791aebeaa3F8",
+    weth: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+    uniswapFactory: "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f",
+    explorer: "https://etherscan.io",
+    dexScreenerChain: "ethereum",
+    xpadPath: "eth",
+    pollingInterval: 12000,
+  },
+};
+
+// Backwards compat exports for listener.js
+export const WSS_RPC_URL = CHAINS.ethereum.rpc;
+export const WSS_RPC_FALLBACK = CHAINS.ethereum.rpcFallback;
+export const FACTORY_ADDRESS = CHAINS.ethereum.factory;
 
 if (!TELEGRAM_BOT_TOKEN) {
   console.error("TELEGRAM_BOT_TOKEN is required");
   process.exit(1);
 }
+
+console.log(`[config] Multi-chain: ${Object.keys(CHAINS).join(" + ")}`);
+
