@@ -1,6 +1,6 @@
 import TelegramBot from "node-telegram-bot-api";
 import { TELEGRAM_BOT_TOKEN } from "./config.js";
-import { getAlerts, toggleAlert, getChatsWithAlert, removeChat, addGroup, removeGroup, getAllGroups } from "./store.js";
+import { getAlerts, toggleAlert, getChatsWithAlert, isAlertEnabled, removeChat, addGroup, removeGroup, getAllGroups } from "./store.js";
 import {
   getTrending,
   getNewTokens,
@@ -110,6 +110,38 @@ function isGroup(msg) {
   return msg.chat.type === "group" || msg.chat.type === "supergroup";
 }
 
+// ─── Admin gating for group commands ────────────────────────────
+
+const adminCache = new Map(); // `${chatId}:${userId}` -> { isAdmin, ts }
+const ADMIN_CACHE_TTL = 60_000;
+
+async function isGroupAdmin(chatId, userId) {
+  if (!userId) return false;
+  const key = `${chatId}:${userId}`;
+  const cached = adminCache.get(key);
+  if (cached && Date.now() - cached.ts < ADMIN_CACHE_TTL) return cached.isAdmin;
+  let isAdmin = false;
+  try {
+    const m = await bot.getChatMember(chatId, userId);
+    isAdmin = !!m && (m.status === "administrator" || m.status === "creator");
+  } catch {
+    isAdmin = false;
+  }
+  adminCache.set(key, { isAdmin, ts: Date.now() });
+  return isAdmin;
+}
+
+/** Wrap a command handler so that in groups only admins can invoke it. DMs are always allowed. */
+function adminOnly(handler) {
+  return async (msg, match) => {
+    if (isGroup(msg)) {
+      const ok = await isGroupAdmin(msg.chat.id, msg.from?.id);
+      if (!ok) return; // silently ignore non-admins in groups
+    }
+    return handler(msg, match);
+  };
+}
+
 // ─── Group tracking: my_chat_member ─────────────────────────────
 
 bot.on("my_chat_member", (update) => {
@@ -140,7 +172,7 @@ function editOrSend(chatId, text, opts, editMessageId) {
 
 // ─── /start & /menu ─────────────────────────────────────────────
 
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, adminOnly((msg) => {
   if (isGroup(msg)) {
     addGroup(msg.chat.id, msg.chat.title);
     bot.sendMessage(msg.chat.id, formatGroupWelcome(), {
@@ -150,9 +182,9 @@ bot.onText(/\/start/, (msg) => {
   } else {
     sendWelcome(msg.chat.id);
   }
-});
+}));
 
-bot.onText(/\/menu/, (msg) => {
+bot.onText(/\/menu/, adminOnly((msg) => {
   if (isGroup(msg)) {
     addGroup(msg.chat.id, msg.chat.title);
     bot.sendMessage(msg.chat.id, formatGroupWelcome(), {
@@ -162,7 +194,7 @@ bot.onText(/\/menu/, (msg) => {
   } else {
     sendWelcome(msg.chat.id);
   }
-});
+}));
 
 function sendWelcome(chatId, editMessageId) {
   const stats = getPlatformStats();
@@ -177,17 +209,17 @@ function sendWelcome(chatId, editMessageId) {
 
 // ─── /help ──────────────────────────────────────────────────────
 
-bot.onText(/\/help/, (msg) => {
+bot.onText(/\/help/, adminOnly((msg) => {
   bot.sendMessage(msg.chat.id, formatHelp(), {
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: [[{ text: "\ud83d\udd19 Menu", callback_data: "back_main" }]] },
     disable_web_page_preview: true,
   });
-});
+}));
 
 // ─── /trending ───────────────────────────────────────────────────
 
-bot.onText(/\/trending/, (msg) => sendTrending(msg.chat.id));
+bot.onText(/\/trending/, adminOnly((msg) => sendTrending(msg.chat.id)));
 
 function sendTrending(chatId, editMessageId) {
   const tokens = getTrending(10);
@@ -199,7 +231,7 @@ function sendTrending(chatId, editMessageId) {
 
 // ─── /new ────────────────────────────────────────────────────────
 
-bot.onText(/\/new/, (msg) => sendNew(msg.chat.id));
+bot.onText(/\/new/, adminOnly((msg) => sendNew(msg.chat.id)));
 
 function sendNew(chatId, editMessageId) {
   const tokens = getNewTokens(10);
@@ -211,7 +243,7 @@ function sendNew(chatId, editMessageId) {
 
 // ─── /graduated ──────────────────────────────────────────────────
 
-bot.onText(/\/graduated/, (msg) => sendGraduated(msg.chat.id));
+bot.onText(/\/graduated/, adminOnly((msg) => sendGraduated(msg.chat.id)));
 
 function sendGraduated(chatId, editMessageId) {
   const tokens = getGraduatedTokens(10);
@@ -223,10 +255,10 @@ function sendGraduated(chatId, editMessageId) {
 
 // ─── /token <address|symbol> ─────────────────────────────────────
 
-bot.onText(/\/token\s+(.+)/, (msg, match) => {
+bot.onText(/\/token\s+(.+)/, adminOnly((msg, match) => {
   const query = match[1].trim();
   sendTokenDetail(msg.chat.id, query);
-});
+}));
 
 function sendTokenDetail(chatId, query, editMessageId) {
   const token = getToken(query);
@@ -246,7 +278,7 @@ function sendTokenDetail(chatId, query, editMessageId) {
 
 // ─── /alerts ─────────────────────────────────────────────────────
 
-bot.onText(/\/alerts/, (msg) => sendAlerts(msg.chat.id));
+bot.onText(/\/alerts/, adminOnly((msg) => sendAlerts(msg.chat.id)));
 
 function sendAlerts(chatId, editMessageId) {
   const alerts = getAlerts(chatId);
@@ -258,7 +290,7 @@ function sendAlerts(chatId, editMessageId) {
 
 // ─── /stats ──────────────────────────────────────────────────────
 
-bot.onText(/\/stats/, (msg) => sendStats(msg.chat.id));
+bot.onText(/\/stats/, adminOnly((msg) => sendStats(msg.chat.id)));
 
 function sendStats(chatId, editMessageId) {
   const stats = getPlatformStats();
@@ -316,10 +348,20 @@ function sendSettings(chatId, editMessageId) {
 
 // ─── Callback query handler ─────────────────────────────────────
 
-bot.on("callback_query", (query) => {
+bot.on("callback_query", async (query) => {
   const chatId = query.message.chat.id;
   const msgId = query.message.message_id;
   const data = query.data;
+  const chatType = query.message.chat.type;
+
+  // In groups, only admins may use the menu buttons.
+  if (chatType === "group" || chatType === "supergroup") {
+    const ok = await isGroupAdmin(chatId, query.from?.id);
+    if (!ok) {
+      bot.answerCallbackQuery(query.id, { text: "Admins only", show_alert: false }).catch(() => {});
+      return;
+    }
+  }
 
   bot.answerCallbackQuery(query.id).catch(() => {});
 
@@ -381,8 +423,14 @@ function broadcastBuyAlert(trade) {
 // ─── Auto-alerts: new launches & graduations ────────────────────
 
 function broadcastNewLaunch(token) {
-  const chatIds = getChatsWithAlert("launches");
-  if (!chatIds.length) return;
+  // Launches are a default-ON alert: every group the bot is in receives them,
+  // unless an admin explicitly turned them off via /alerts. Plus any private
+  // chats that enabled the alert. (Groups never get a data.chats entry on their
+  // own, so getChatsWithAlert alone would silently skip them \u2014 that was the bug.)
+  const groups = getAllGroups();
+  const targets = new Set(groups.filter((id) => isAlertEnabled(id, "launches", true)));
+  for (const id of getChatsWithAlert("launches")) targets.add(String(id));
+  if (!targets.size) return;
   const text = formatNewLaunchAlert(token);
   const kb = [
     [
@@ -390,23 +438,28 @@ function broadcastNewLaunch(token) {
       { text: "\ud83d\udcb0 Buy", url: `https://xpad.fun/token/${token.address}` },
     ],
   ];
-  for (const chatId of chatIds) {
-    safeSend(chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: kb }, disable_web_page_preview: true });
+  for (const chatId of targets) {
+    enqueueSend(chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: kb }, disable_web_page_preview: true });
   }
 }
 
 function broadcastGraduation(token) {
-  const chatIds = getChatsWithAlert("graduations");
-  if (!chatIds.length) return;
+  // Graduations are a default-ON alert too: broadcast to all groups (opt-out via
+  // /alerts) plus private subscribers. Same fix as broadcastNewLaunch.
+  const groups = getAllGroups();
+  const targets = new Set(groups.filter((id) => isAlertEnabled(id, "graduations", true)));
+  for (const id of getChatsWithAlert("graduations")) targets.add(String(id));
+  if (!targets.size) return;
   const text = formatGraduationAlert(token);
+  const dexChain = token.chainKey === "base" ? "base" : "ethereum";
   const kb = [
     [
       { text: "\ud83d\udcca Chart", url: `https://xpad.fun/token/${token.address}` },
-      { text: "\ud83e\udd84 DexScreener", url: `https://dexscreener.com/ethereum/${token.pairAddress || token.address}` },
+      { text: "\ud83e\udd84 DexScreener", url: `https://dexscreener.com/${dexChain}/${token.pairAddress || token.address}` },
     ],
   ];
-  for (const chatId of chatIds) {
-    safeSend(chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: kb }, disable_web_page_preview: true });
+  for (const chatId of targets) {
+    enqueueSend(chatId, text, { parse_mode: "HTML", reply_markup: { inline_keyboard: kb }, disable_web_page_preview: true });
   }
 }
 
@@ -426,8 +479,28 @@ function broadcastTrending() {
   }
 }
 
-// Run trending broadcast every 4 hours
+// Run trending broadcast every 4 hours (to private "trending" alert subscribers)
 setInterval(broadcastTrending, 4 * 60 * 60_000);
+
+// ─── Hourly trending leaderboard to every group the bot is in ───
+
+function broadcastHourlyTrending() {
+  const groups = getAllGroups();
+  if (!groups.length) return;
+  const tokens = getTrending(5);
+  if (!tokens.length) return;
+  const text = formatTrendingAlert(tokens);
+  const kb = tokens.slice(0, 3).map((t) => [
+    { text: `📈 ${t.symbol}`, url: `https://xpad.fun/token/${t.address}` },
+  ]);
+  const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: kb }, disable_web_page_preview: true };
+  for (const chatId of groups) {
+    enqueueSend(chatId, text, opts);
+  }
+}
+
+// Post the trending leaderboard to all groups every hour
+setInterval(broadcastHourlyTrending, 60 * 60_000);
 
 // ─── Momentum update (every 2h to all groups) ───────────────────
 
@@ -514,6 +587,15 @@ setCallbacks({
 // ─── Start blockchain listener ──────────────────────────────────
 
 startListener(broadcastBuyAlert);
+
+// ─── DM fallback: any non-command message in a private chat shows the menu ──
+
+bot.on("message", (msg) => {
+  if (msg.chat?.type !== "private") return;
+  const txt = msg.text || "";
+  if (txt.startsWith("/")) return; // commands are handled by their own onText
+  sendWelcome(msg.chat.id);
+});
 
 // ─── Handle polling errors gracefully ────────────────────────────
 

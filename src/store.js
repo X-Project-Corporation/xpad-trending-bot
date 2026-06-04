@@ -95,6 +95,18 @@ export function getChatsWithAlert(alertType) {
   return result;
 }
 
+/**
+ * Read an alert flag WITHOUT creating/persisting a chat entry.
+ * Returns `defaultVal` when the chat has no stored config for this alert.
+ * Used so groups can receive default-ON alerts (launches/graduations) even
+ * if nobody ever opened the /alerts menu in that group.
+ */
+export function isAlertEnabled(chatId, alertType, defaultVal = false) {
+  const chat = data.chats[String(chatId)];
+  if (!chat || !chat.alerts || chat.alerts[alertType] === undefined) return defaultVal;
+  return !!chat.alerts[alertType];
+}
+
 export function removeChat(chatId) {
   delete data.chats[String(chatId)];
   debouncedSave();
