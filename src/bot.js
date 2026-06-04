@@ -484,7 +484,9 @@ setInterval(broadcastTrending, 4 * 60 * 60_000);
 
 // ─── Hourly trending leaderboard to every group the bot is in ───
 
-function broadcastHourlyTrending() {
+const lastTrendingPin = new Map(); // chatId -> message_id of the previously pinned trending post
+
+async function broadcastHourlyTrending() {
   const groups = getAllGroups();
   if (!groups.length) return;
   const tokens = getTrending(5);
@@ -495,7 +497,19 @@ function broadcastHourlyTrending() {
   ]);
   const opts = { parse_mode: "HTML", reply_markup: { inline_keyboard: kb }, disable_web_page_preview: true };
   for (const chatId of groups) {
-    enqueueSend(chatId, text, opts);
+    try {
+      const sent = await bot.sendMessage(chatId, text, opts);
+      // Unpin the previous hourly trending post so pins don't pile up.
+      const prev = lastTrendingPin.get(chatId);
+      if (prev) {
+        await bot.unpinChatMessage(chatId, { message_id: prev }).catch(() => {});
+      }
+      // Pin the new one silently (no @everyone ping each hour).
+      await bot.pinChatMessage(chatId, sent.message_id, { disable_notification: true });
+      lastTrendingPin.set(chatId, sent.message_id);
+    } catch (err) {
+      handleSendError(chatId, err);
+    }
   }
 }
 
@@ -583,6 +597,34 @@ setCallbacks({
   onNewLaunch: broadcastNewLaunch,
   onGraduation: broadcastGraduation,
 });
+
+// ─── Register the command menu (the "/" autocomplete) ──────────
+
+const BOT_COMMANDS = [
+  { command: "menu", description: "Open the menu" },
+  { command: "trending", description: "Trending tokens right now" },
+  { command: "new", description: "Newest launches" },
+  { command: "graduated", description: "Graduated tokens" },
+  { command: "token", description: "Look up a token by address or symbol" },
+  { command: "stats", description: "Platform stats" },
+  { command: "alerts", description: "Alert settings" },
+  { command: "help", description: "How to use this bot" },
+];
+
+async function registerCommands() {
+  try {
+    // DM: everyone sees the commands.
+    await bot.setMyCommands(BOT_COMMANDS, { scope: { type: "all_private_chats" } });
+    // Groups: only admins see the commands (matches the admin-only command gating).
+    await bot.setMyCommands(BOT_COMMANDS, { scope: { type: "all_chat_administrators" } });
+    // Non-admins in groups see nothing from this bot.
+    await bot.setMyCommands([], { scope: { type: "all_group_chats" } });
+    console.log("Bot commands registered (DM + group admins)");
+  } catch (e) {
+    console.error("setMyCommands failed:", e.message?.slice(0, 100));
+  }
+}
+registerCommands();
 
 // ─── Start blockchain listener ──────────────────────────────────
 
