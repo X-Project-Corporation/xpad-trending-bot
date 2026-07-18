@@ -1,6 +1,12 @@
 import { XPAD_API_URL, CHAINS } from "./config.js";
 import { detectEvents } from "./events.js";
 
+// First-party bypass of the backend's per-IP throttle (Railway egress IPs are
+// shared, so without this the bot competes with everyone else's bucket).
+const API_HEADERS = process.env.INTERNAL_API_SECRET
+  ? { "x-internal-key": process.env.INTERNAL_API_SECRET }
+  : {};
+
 // ─── Hidden tokens (test/spam) ─────────────────────────────────
 
 const HIDDEN_TOKENS = new Set([
@@ -177,8 +183,8 @@ async function fetchAllTokens() {
   try {
     // Fetch from both chains in parallel
     const [ethRes, baseRes] = await Promise.allSettled([
-      fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=1`),
-      fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=8453`),
+      fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=1`, { headers: API_HEADERS }),
+      fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=8453`, { headers: API_HEADERS }),
     ]);
 
     let tokenList = [];
@@ -225,18 +231,28 @@ async function fetchAllTokens() {
     const toEnrich = validTokens.slice(0, 15);
     const tradeDataMap = new Map();
 
-    const tradePromises = toEnrich.map(async ({ addr }) => {
-      try {
-        const tRes = await fetch(
-          `${XPAD_API_URL}/trade/token-info?tokenAddress=${addr}`
-        );
-        if (tRes.ok) {
-          const data = await tRes.json();
-          tradeDataMap.set(addr, data);
-        }
-      } catch {}
-    });
-    await Promise.all(tradePromises);
+    // Paced in small chunks: a 15-request burst was tripping the backend's
+    // per-IP throttle alongside the list calls.
+    const ENRICH_CHUNK = 5;
+    for (let i = 0; i < toEnrich.length; i += ENRICH_CHUNK) {
+      await Promise.all(
+        toEnrich.slice(i, i + ENRICH_CHUNK).map(async ({ addr }) => {
+          try {
+            const tRes = await fetch(
+              `${XPAD_API_URL}/trade/token-info?tokenAddress=${addr}`,
+              { headers: API_HEADERS }
+            );
+            if (tRes.ok) {
+              const data = await tRes.json();
+              tradeDataMap.set(addr, data);
+            }
+          } catch {}
+        })
+      );
+      if (i + ENRICH_CHUNK < toEnrich.length) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
 
     // Third pass: for graduated tokens with pairAddress, fetch DexScreener
     const dexDataMap = new Map();
