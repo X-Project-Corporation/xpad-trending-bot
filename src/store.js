@@ -11,11 +11,31 @@ let saveTimer = null;
 // ─── Load / Save ─────────────────────────────────────────────────
 
 export function load() {
-  if (tryLoad(STORE_PATH)) return;
-  console.warn("Main store failed, trying backup...");
-  if (tryLoad(BACKUP_PATH)) { save(); return; }
-  console.warn("No store found, starting fresh.");
-  data = { chats: {}, groups: {} };
+  if (!tryLoad(STORE_PATH)) {
+    console.warn("Main store failed, trying backup...");
+    if (tryLoad(BACKUP_PATH)) save();
+    else {
+      console.warn("No store found, starting fresh.");
+      data = { chats: {}, groups: {} };
+    }
+  }
+  seedGroups();
+}
+
+// The data dir is on an ephemeral FS (wiped on every redeploy), which used to
+// silently empty the broadcast list until an admin re-ran /start in each
+// group. SEED_GROUPS (comma-separated chat ids) guarantees the core groups
+// are always registered at boot.
+function seedGroups() {
+  const seeds = (process.env.SEED_GROUPS || "")
+    .split(",").map((s) => s.trim()).filter(Boolean);
+  for (const id of seeds) {
+    if (!data.groups[id]) {
+      data.groups[id] = { title: "seed", addedAt: new Date().toISOString() };
+      console.log(`Group seeded from SEED_GROUPS: ${id}`);
+    }
+  }
+  if (seeds.length) debouncedSave();
 }
 
 function tryLoad(filepath) {

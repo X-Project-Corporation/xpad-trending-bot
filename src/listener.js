@@ -268,8 +268,9 @@ export function startListener(onBuy) {
   refreshEthPrice();
   setInterval(refreshEthPrice, 60_000);
 
-  // Subscribe to ALL chains
+  // Subscribe to all chains with an RPC listener (API-only chains skip)
   for (const chainKey of Object.keys(CHAINS)) {
+    if (CHAINS[chainKey].listenerEnabled === false) continue;
     subscribeChain(chainKey);
   }
 }

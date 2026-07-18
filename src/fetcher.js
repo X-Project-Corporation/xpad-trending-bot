@@ -182,14 +182,15 @@ let lastSnapshotTime = 0;
 async function fetchAllTokens() {
   try {
     // Fetch from both chains in parallel
-    const [ethRes, baseRes] = await Promise.allSettled([
+    const [ethRes, baseRes, rhRes] = await Promise.allSettled([
       fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=1`, { headers: API_HEADERS }),
       fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=8453`, { headers: API_HEADERS }),
+      fetch(`${XPAD_API_URL}/api/v1/tokens?limit=200&chain=4663`, { headers: API_HEADERS }),
     ]);
 
     let tokenList = [];
     let allChainsOk = true;
-    for (const [chainKey, result] of [["ethereum", ethRes], ["base", baseRes]]) {
+    for (const [chainKey, result] of [["ethereum", ethRes], ["base", baseRes], ["robinhood", rhRes]]) {
       if (result.status !== "fulfilled" || !result.value.ok) {
         // A failed chain fetch must NOT shrink the baseline set, or the
         // recovery cycle re-announces every token of that chain as "new".

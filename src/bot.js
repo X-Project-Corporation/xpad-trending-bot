@@ -1,5 +1,5 @@
 import TelegramBot from "node-telegram-bot-api";
-import { TELEGRAM_BOT_TOKEN } from "./config.js";
+import { TELEGRAM_BOT_TOKEN, CHAINS } from "./config.js";
 import { getAlerts, toggleAlert, getChatsWithAlert, isAlertEnabled, removeChat, addGroup, removeGroup, getAllGroups } from "./store.js";
 import {
   getTrending,
@@ -461,7 +461,7 @@ function broadcastGraduation(token) {
   for (const id of getChatsWithAlert("graduations")) targets.add(String(id));
   if (!targets.size) return;
   const text = formatGraduationAlert(token);
-  const dexChain = token.chainKey === "base" ? "base" : "ethereum";
+  const dexChain = (CHAINS[token.chainKey] || CHAINS.ethereum).dexScreenerChain;
   const kb = [
     [
       { text: "\ud83d\udcca Chart", url: `https://xpad.fun/token/${token.address}` },

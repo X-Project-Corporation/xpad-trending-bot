@@ -1,3 +1,5 @@
+import { CHAINS } from "./config.js";
+
 // ─── Formatting helpers ──────────────────────────────────────────
 
 function shortAddr(addr) {
@@ -62,23 +64,27 @@ function timeAgo() {
   return "just now";
 }
 
-// Chain-aware URL helpers
+// Chain-aware URL helpers routed through CHAINS config so adding a chain
+// never needs edits here (binary base/eth conditionals broke on Robinhood)
+function chainCfg(chainKey) {
+  return CHAINS[chainKey] || CHAINS.ethereum;
+}
+
 function tokenUrl(t) {
-  const path = t.chainKey === "base" ? "base" : "eth";
-  return `https://xpad.fun/${path}/${t.address}`;
+  return `https://xpad.fun/${chainCfg(t.chainKey).xpadPath}/${t.address}`;
 }
 
 function explorerUrl(t) {
-  return t.chainKey === "base" ? "https://basescan.org" : "https://etherscan.io";
+  return chainCfg(t.chainKey).explorer;
 }
 
 function dexScreenerUrl(t) {
-  const chain = t.chainKey === "base" ? "base" : "ethereum";
-  return `https://dexscreener.com/${chain}/${t.pairAddress || t.address}`;
+  return `https://dexscreener.com/${chainCfg(t.chainKey).dexScreenerChain}/${t.pairAddress || t.address}`;
 }
 
+const CHAIN_BADGES = { base: "\ud83d\udd35", ethereum: "\u26aa", robinhood: "\ud83c\udff9" }; // 🔵 Base, ⚪ ETH, 🏹 Robinhood
 function chainBadge(t) {
-  return t.chainKey === "base" ? "\ud83d\udd35" : "\u26aa"; // 🔵 Base, ⚪ ETH
+  return CHAIN_BADGES[t.chainKey] || "\u26aa";
 }
 
 // ─── Welcome / Start (private chat) ─────────────────────────────
@@ -447,8 +453,8 @@ export function formatBuyAlert(trade) {
 
 export function formatBuyAlertButtons(trade) {
   const chainKey = trade.chainKey || "ethereum";
-  const path = chainKey === "base" ? "base" : "eth";
-  const dexChain = chainKey === "base" ? "base" : "ethereum";
+  const path = chainCfg(chainKey).xpadPath;
+  const dexChain = chainCfg(chainKey).dexScreenerChain;
   return [
     [
       { text: "\ud83d\udcca xpad", url: `https://xpad.fun/${path}/${trade.tokenAddress}` },

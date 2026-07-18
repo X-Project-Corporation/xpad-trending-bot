@@ -30,6 +30,23 @@ export const CHAINS = {
     xpadPath: "eth",
     pollingInterval: 12000,
   },
+  robinhood: {
+    name: "Robinhood",
+    chainId: 4663,
+    // API-only chain: launch alerts + trending come from the backend fetch.
+    // Buy alerts on RH are the buybot's job (its getLogs poller); this bot's
+    // WSS Uniswap listener doesn't work on RH's RPC, so it skips this chain.
+    listenerEnabled: false,
+    rpc: null,
+    rpcFallback: null,
+    factory: null,
+    weth: null,
+    uniswapFactory: null,
+    explorer: "https://robinhood.blockscout.com",
+    dexScreenerChain: "robinhood",
+    xpadPath: "robinhood",
+    pollingInterval: 0,
+  },
 };
 
 // Backwards compat exports for listener.js
