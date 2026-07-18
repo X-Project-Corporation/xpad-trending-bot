@@ -1,4 +1,5 @@
 import { XPAD_API_URL, CHAINS } from "./config.js";
+import { detectEvents } from "./events.js";
 
 // ─── Hidden tokens (test/spam) ─────────────────────────────────
 
@@ -181,8 +182,18 @@ async function fetchAllTokens() {
     ]);
 
     let tokenList = [];
+    let allChainsOk = true;
     for (const [chainKey, result] of [["ethereum", ethRes], ["base", baseRes]]) {
-      if (result.status !== "fulfilled" || !result.value.ok) continue;
+      if (result.status !== "fulfilled" || !result.value.ok) {
+        // A failed chain fetch must NOT shrink the baseline set, or the
+        // recovery cycle re-announces every token of that chain as "new".
+        allChainsOk = false;
+        const why = result.status !== "fulfilled"
+          ? (result.reason?.message || "request failed")
+          : `HTTP ${result.value.status}`;
+        console.error(`[fetch] ${chainKey} token list fetch failed: ${why}`);
+        continue;
+      }
       const json = await result.value.json();
       const list = Array.isArray(json) ? json : json.tokens || [];
       // Tag each token with its chain
@@ -303,28 +314,23 @@ async function fetchAllTokens() {
       tokens.set(addr, token);
     }
 
-    // Detect new launches
-    if (prevTokenAddrs.size > 0 && onNewLaunch) {
-      for (const addr of currentAddrs) {
-        if (!prevTokenAddrs.has(addr)) {
-          const t = tokens.get(addr);
-          if (t) onNewLaunch(t);
-        }
-      }
-    }
+    // Detect new launches & graduations (guarded against partial fetch
+    // failures and stale-token reappearance — see events.js)
+    const { launches, graduations, updateBaseline } = detectEvents({
+      prevAddrs: prevTokenAddrs,
+      prevGraduated,
+      currentAddrs,
+      currentGraduated,
+      getToken: (a) => tokens.get(a),
+      allChainsOk,
+    });
+    if (onNewLaunch) for (const t of launches) onNewLaunch(t);
+    if (onGraduation) for (const t of graduations) onGraduation(t);
 
-    // Detect graduations
-    if (prevGraduated.size > 0 && onGraduation) {
-      for (const addr of currentGraduated) {
-        if (!prevGraduated.has(addr)) {
-          const t = tokens.get(addr);
-          if (t) onGraduation(t);
-        }
-      }
+    if (updateBaseline) {
+      prevTokenAddrs = currentAddrs;
+      prevGraduated = currentGraduated;
     }
-
-    prevTokenAddrs = currentAddrs;
-    prevGraduated = currentGraduated;
 
     // Take snapshots every 5 min
     const now = Date.now();
