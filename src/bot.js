@@ -160,6 +160,16 @@ bot.on("my_chat_member", (update) => {
   }
 });
 
+// Self-heal: the store lives on an ephemeral FS (wiped on every redeploy),
+// so re-register active groups from any incoming message — otherwise alerts
+// stay dead until an admin manually runs /start in the group.
+bot.on("message", (msg) => {
+  const t = msg.chat?.type;
+  if (t === "group" || t === "supergroup") {
+    addGroup(msg.chat.id, msg.chat.title);
+  }
+});
+
 // ─── Edit or send helper ────────────────────────────────────────
 
 function editOrSend(chatId, text, opts, editMessageId) {
