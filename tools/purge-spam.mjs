@@ -26,6 +26,10 @@ const FROM = parseInt(arg("from"), 10);
 const TO = arg("to") ? parseInt(arg("to"), 10) : null;
 const SCRATCH = arg("scratch", "1407438598"); // owner DM
 const DRY = args.includes("--dry");
+// Only delete messages originally posted inside [--after, --before] (extra
+// guard so legit alerts outside the spam window can never match).
+const AFTER = arg("after") ? Date.parse(arg("after")) / 1000 : 0;
+const BEFORE = arg("before") ? Date.parse(arg("before")) / 1000 : Infinity;
 const BOT_ID = 8623962108; // @xpad_trending_bot
 
 if (!TOKEN || !CHAT || !Number.isInteger(FROM)) {
@@ -89,8 +93,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
     const origin = fwd.forward_origin;
     const fromBot = origin?.type === "user" && origin.sender_user?.id === BOT_ID;
+    const origDate = origin?.date || fwd.forward_date || 0;
     const text = fwd.text || fwd.caption || "";
-    const isSpam = fromBot && SPAM_PATTERNS.some((p) => text.includes(p));
+    const isSpam = fromBot && origDate >= AFTER && origDate <= BEFORE &&
+      SPAM_PATTERNS.some((p) => text.includes(p));
 
     await api("deleteMessage", { chat_id: SCRATCH, message_id: fwd.message_id });
 

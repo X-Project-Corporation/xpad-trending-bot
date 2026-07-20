@@ -1,5 +1,6 @@
 import { XPAD_API_URL, CHAINS } from "./config.js";
 import { detectEvents } from "./events.js";
+import { withinMcapCap } from "./mcap.js";
 
 // First-party bypass of the backend's per-IP throttle (Railway egress IPs are
 // shared, so without this the bot competes with everyone else's bucket).
@@ -48,7 +49,7 @@ export function setCallbacks({ onNewLaunch: nl, onGraduation: grad }) {
 }
 
 export function getAllTokens() {
-  return [...tokens.values()];
+  return [...tokens.values()].filter(withinMcapCap);
 }
 
 export function getToken(addressOrSymbol) {
@@ -71,6 +72,7 @@ export function getSnapshots(address) {
 export function getTrending(limit = 10) {
   const scored = [];
   for (const t of tokens.values()) {
+    if (!withinMcapCap(t)) continue;
     scored.push({ ...t, trendingScore: computeScore(t) });
   }
   scored.sort((a, b) => b.trendingScore - a.trendingScore);
@@ -347,6 +349,31 @@ async function fetchAllTokens() {
     if (updateBaseline) {
       prevTokenAddrs = currentAddrs;
       prevGraduated = currentGraduated;
+    }
+
+    // ── Reconcile the cache against what the API actually returns ──
+    // `tokens` only ever GREW. Blue-chips ingested back when /tokens still served
+    // source='discovered' rows stayed resident for the life of the process and kept being
+    // broadcast (USDC at $73B and cbBTC at $6.1B in a "TOP TOKENS" post), even though the
+    // API had long since stopped returning them. Fixing the API was necessary but not
+    // sufficient: a cache that never evicts has to be reconciled, not just starved.
+    // Same lesson as the buybot's persistent watchlist.
+    //
+    // Fail-closed on purpose: prune ONLY when every chain answered. If one chain 500s, its
+    // tokens are absent from currentAddrs through no fault of their own, and evicting them
+    // would make the next cycle re-announce every one of them as a brand-new launch.
+    // Runs AFTER detectEvents so a token disappearing cannot swallow its own graduation.
+    if (allChainsOk) {
+      let pruned = 0;
+      for (const addr of [...tokens.keys()]) {
+        if (currentAddrs.has(addr)) continue;
+        tokens.delete(addr);
+        snapshots.delete(addr);
+        pruned++;
+      }
+      if (pruned > 0) {
+        console.log(`[fetch] pruned ${pruned} stale token(s) the API no longer returns`);
+      }
     }
 
     // Take snapshots every 5 min
