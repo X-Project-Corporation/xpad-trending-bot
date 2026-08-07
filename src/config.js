@@ -47,6 +47,24 @@ export const CHAINS = {
     xpadPath: "robinhood",
     pollingInterval: 0,
   },
+  arbitrum: {
+    name: "Arbitrum",
+    chainId: 42161,
+    // API-only, same rationale as Robinhood: xpad launches here are single-sided V3
+    // (PumpFactoryV3Fee, 0.3% tier) with no bonding curve and no V2 graduation, so there is
+    // no PairCreated for the WSS listener to watch. Launch alerts + trending come from the
+    // backend fetch; buy alerts are the buybot's job (it polls this chain's V3 pools).
+    listenerEnabled: false,
+    rpc: null,
+    rpcFallback: null,
+    factory: null,
+    weth: null,
+    uniswapFactory: null,
+    explorer: "https://arbiscan.io",
+    dexScreenerChain: "arbitrum",
+    xpadPath: "arbitrum",
+    pollingInterval: 0,
+  },
 };
 
 // Backwards compat exports for listener.js
